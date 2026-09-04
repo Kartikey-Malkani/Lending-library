@@ -102,6 +102,28 @@ export function errorHandler(
     return;
   }
 
+  /*
+   * body-parser rejections (a payload over the limit, malformed JSON) arrive as
+   * plain errors carrying a status and an `entity.*` type. Without this they
+   * fall through to the 500 below, which would report a client mistake as a
+   * server fault — and would have told a caller uploading an oversized CSV that
+   * the server had broken.
+   */
+  const bodyError = err as { type?: unknown; status?: unknown; statusCode?: unknown };
+  if (typeof bodyError.type === 'string' && bodyError.type.startsWith('entity.')) {
+    const status = typeof bodyError.status === 'number' ? bodyError.status : 400;
+    res.status(status).json({
+      error: {
+        code: status === 413 ? 'payload_too_large' : 'bad_request',
+        message:
+          status === 413
+            ? 'The uploaded content is too large.'
+            : 'The request body could not be parsed.',
+      },
+    } satisfies ErrorBody);
+    return;
+  }
+
   console.error('Unhandled error:', err);
   res.status(500).json({
     error: { code: 'internal_error', message: 'An unexpected error occurred.' },

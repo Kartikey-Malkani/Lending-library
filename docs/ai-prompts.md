@@ -526,6 +526,66 @@ asserts something only the correct implementation produces.
 
 ---
 
+## 8. Milestone 6 — bulk import, bulk return and CSV export
+
+### Prompt
+
+The planning prompt contained one instruction that changed the milestone:
+
+> One especially important point: before deciding what "currently out" means for CSV export, inspect
+> the assignment README/requirements and existing implementation rather than guessing.
+>
+> Also inspect the existing loan lifecycle service before proposing a second bulk-specific
+> implementation. Prefer composing the existing business-rule/transition logic where practical.
+
+### What I got, and the correction that mattered most
+
+Re-reading goal 7 turned up a discrepancy in the milestone as it had been described to me. The brief
+says "Librarians can bulk-import **catalogue items** from a CSV file" — but the requirements I was
+given described importing *loans*: borrower ids, conflicts with existing open loans, archived items,
+and "every successful lifecycle change must create the same immutable loan_events".
+
+None of that applies to importing items. A row is a title, a category and a code; it creates no loan
+and no timeline entry. Building the loan importer would have meant writing something the brief never
+asks for while possibly not writing the thing it does, so I stopped and asked rather than picking one.
+The answer was to build the item importer.
+
+The same instruction settled the export. "Currently out on loan, with its borrower and **due date**"
+excludes requested loans, because a requested loan has no due date — the database forbids one. That
+is a reading with evidence behind it rather than a preference.
+
+### What went wrong
+
+**A third vacuous test — and this time the flaw was in the test's own mechanics.**
+
+The mutation checks the milestone asked for both worked: wrapping the import in one whole-file
+transaction failed eight tests, and widening the export past `status = 'issued'` failed one. Then I
+mutated `returnLoan`'s conditional UPDATE into a read-then-write to check the bulk-return race tests,
+and only one of the two caught it. The `Promise.all` bulk-versus-single test passed against the
+broken implementation, because the two requests simply had not overlapped that run.
+
+So I wrote a deterministic version using the held-transaction technique from milestone 4 — and **it
+also passed against the mutant**. The cause was subtler than the last two: a supertest request object
+is lazy and does not dispatch until `.then()` is called on it. My "pending" request had not started
+at all; it only began after the holding transaction had already committed, so there was never a race
+to observe. Adding `.then((r) => r)` to force dispatch made the test fail against the mutant and pass
+against the real implementation.
+
+That is now the third milestone in a row where a test asserting the right outcome proved nothing, and
+the first where the fault was in how the test drove the system rather than in what it asserted.
+
+### Lesson
+
+Mutation testing has caught something in every milestone I have used it on, and the failures keep
+being different in kind: an outcome that could happen by luck (M4), a database that happened to be
+stable (M5), and now a request that never ran. The common thread is that a green test tells you
+nothing about whether it *could* have gone red.
+
+Concretely: when a test is meant to prove behaviour under concurrency, assert that the interleaving
+actually happened — not only that the end state looks right.
+
+---
+
 ## Not yet written
 
-Milestones 6 onward. This file is appended to as each one lands.
+Milestones 7 onward. This file is appended to as each one lands.

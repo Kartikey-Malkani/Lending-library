@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { currentUser, requireCapability } from '../auth/middleware.js';
 import { replaceCustodians } from '../catalogue/custodians.js';
+import { importCatalogueItems } from '../catalogue/import.js';
+import { catalogueItemInputSchema } from '../catalogue/validation.js';
 import {
   archiveItem,
   createItem,
@@ -14,7 +16,7 @@ import {
   updateItem,
 } from '../catalogue/service.js';
 import { listLoansForItem } from '../loans/service.js';
-import { asyncHandler } from '../http/errors.js';
+import { ApiError, asyncHandler } from '../http/errors.js';
 import {
   boundedText,
   paginationSchema,
@@ -40,13 +42,8 @@ const listQuerySchema = paginationSchema.extend({
   dir: sortDirectionSchema,
 });
 
-const createItemSchema = z
-  .object({
-    title: boundedText(200),
-    category: boundedText(100),
-    code: boundedText(50),
-  })
-  .strict();
+// Shared with the CSV importer so both hold a new item to the same rules.
+const createItemSchema = catalogueItemInputSchema;
 
 // At least one field, so an empty PATCH is a bad request rather than a silent
 // no-op that reports success.
@@ -167,5 +164,32 @@ itemsRouter.put(
     const { librarianIds } = parseBody(req, custodiansSchema);
     const user = currentUser(req);
     res.json({ custodians: await replaceCustodians(id, librarianIds, user.userId) });
+  }),
+);
+
+/**
+ * Bulk import of catalogue items from a CSV body.
+ *
+ * Partial success by design: valid rows are imported even when others fail, and
+ * the response names every failure with the row number a spreadsheet shows. The
+ * status is 200 rather than 201 because the outcome is a report — a request in
+ * which every row failed is still a successfully processed report, not a
+ * failed request.
+ */
+itemsRouter.post(
+  '/items/import',
+  requireCapability('bulk:import'),
+  asyncHandler(async (req, res) => {
+    const csv = req.body;
+    if (typeof csv !== 'string' || csv.trim() === '') {
+      throw ApiError.badRequest(
+        'Send the CSV file as the request body with Content-Type: text/csv.',
+      );
+    }
+
+    const user = currentUser(req);
+    // The creating librarian comes from the session. Nothing in the file can
+    // name an actor.
+    res.json(await importCatalogueItems(csv, user.userId));
   }),
 );

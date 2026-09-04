@@ -16,6 +16,10 @@ import { loansRouter } from './routes/loans.js';
 export function applyBaseMiddleware(app: Express): void {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
+  // CSV uploads arrive as a raw text body rather than multipart: the client is
+  // an SPA that reads the file itself, so a multipart dependency would buy
+  // nothing. The limit is what stops a huge upload from occupying the process.
+  app.use(express.text({ type: 'text/csv', limit: '1mb' }));
   // Populates req.auth from the session cookie. Does not reject: guards do that.
   app.use(attachSession);
 }

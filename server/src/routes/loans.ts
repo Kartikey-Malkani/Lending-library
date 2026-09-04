@@ -15,7 +15,9 @@ import {
   requestLoan,
   returnLoan,
 } from '../loans/service.js';
-import { asyncHandler } from '../http/errors.js';
+import { bulkReturnLoans, MAX_BULK_RETURN } from '../loans/bulk.js';
+import { buildOnLoanCsv, onLoanCsvFilename } from '../loans/export.js';
+import { ApiError, asyncHandler } from '../http/errors.js';
 import {
   paginationSchema,
   parseBody,
@@ -76,6 +78,13 @@ const createIssuedSchema = z
     itemId: z.string().uuid(),
     borrowerId: z.string().uuid(),
     dueOn: dueOnSchema,
+    note: noteSchema,
+  })
+  .strict();
+
+const bulkReturnSchema = z
+  .object({
+    loanIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_RETURN),
     note: noteSchema,
   })
   .strict();
@@ -170,6 +179,54 @@ loansRouter.post(
     const user = currentUser(req);
 
     res.json({ loan: await markLoanLost({ loanId: id, note, actorId: user.userId }) });
+  }),
+);
+
+/**
+ * CSV of every item currently out on loan.
+ *
+ * Registered before `/loans/:id`, and that ordering is load-bearing: Express
+ * matches in order, so `:id` would otherwise capture "export.csv" and the
+ * request would 404 on a malformed uuid instead of returning the file.
+ */
+loansRouter.get(
+  '/loans/export.csv',
+  requireCapability('export:on-loan'),
+  asyncHandler(async (_req, res) => {
+    const csv = await buildOnLoanCsv();
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${onLoanCsvFilename()}"`);
+    res.send(csv);
+  }),
+);
+
+/**
+ * Returning several issued loans in one action.
+ *
+ * Repeated loan ids are rejected rather than deduplicated. The response is a
+ * per-loan result, so every entry should correspond to exactly one requested
+ * loan; reporting the second occurrence of an id as "already returned" would
+ * describe the caller's own repetition as though it were a fact about the data.
+ */
+loansRouter.post(
+  '/loans/bulk-return',
+  requireCapability('bulk:return'),
+  asyncHandler(async (req, res) => {
+    const { loanIds, note } = parseBody(req, bulkReturnSchema);
+
+    const duplicates = [...new Set(loanIds.filter((id, i) => loanIds.indexOf(id) !== i))];
+    if (duplicates.length > 0) {
+      throw new ApiError(
+        400,
+        'duplicate_loan_id',
+        'Each loan may appear only once in a bulk return.',
+        duplicates.map((id) => ({ field: 'loanIds', message: `Repeated loan id: ${id}` })),
+      );
+    }
+
+    const user = currentUser(req);
+    res.json(await bulkReturnLoans({ loanIds, note, actorId: user.userId }));
   }),
 );
 

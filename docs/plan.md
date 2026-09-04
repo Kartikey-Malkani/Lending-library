@@ -17,8 +17,8 @@ The order is deliberate: nothing is built before the thing it depends on can be 
 | 2 | Sessions, role guards, authorization matrix | done | `ec04c16` |
 | 3 | Catalogue CRUD, archive/restore, custodians | done | `7bda8f8` |
 | 4 | Loan lifecycle, timeline, overdue derivation | done | `f2be968` |
-| 5 | Loans list: search, filters, sorting, pagination | done | *pending review* |
-| 6 | Bulk CSV import, bulk return, export | planned | — |
+| 5 | Loans list: search, filters, sorting, pagination | done | `3abe170` |
+| 6 | Bulk CSV import, bulk return, export | done | *pending review* |
 | 7 | Dashboard and overdue alerts | planned | — |
 | 8 | Frontend | planned | — |
 | 9 | Deployment and seeded demo data | planned | — |
@@ -56,6 +56,7 @@ Recorded per milestone as it lands. The budget is ~12 hours total.
 | 3 | 1 h | ~1 h | Came in on estimate; no migration turned out to be needed |
 | 4 | 1.5 h | ~2 h | The extra went on discovering the race tests were vacuous, and on a real timeline-ordering bug |
 | 5 | 1 h | ~1.25 h | No migration needed again; the extra went on a second vacuous test, this time for pagination ordering |
+| 6 | 1.5 h | ~1.75 h | Re-reading the brief caught that the import is of items, not loans; a third vacuous test found by mutation |
 
 Running total is ahead of the original plan's estimate for the same point, mostly because each
 milestone has been planned before being written.
@@ -72,6 +73,11 @@ milestone has been planned before being written.
 - **Milestone 5 needed no migration either.** The indexes on `status`, `due_on`, `requested_at`,
   `borrower_id` and `(status, due_on)` from milestone 1 already cover every filter and sort the
   loans list offers.
+- **Milestone 6 needed no migration either** — bulk operations write through existing services, and
+  the export is a read. Four milestones running with no schema change, which is what milestone 1
+  spending its time on the data model bought.
+- **The CSV import is of catalogue items, not loans.** The milestone was specified to me in
+  loan-shaped terms; re-reading goal 7 settled it (Decision 15).
 
 ## Known gaps, carried forward deliberately
 

@@ -391,3 +391,92 @@ assumption stops being true.
   requested → issued → returned → lost. Alphabetically it would be issued, lost, requested, returned,
   which reads as nonsense; there is a test asserting the lifecycle order rather than trusting it.
 
+---
+
+## Decision 15 — The CSV import is of catalogue items, and the export is of issued loans
+
+- **Chose:** `POST /api/items/import` imports **catalogue items** (title, category, code). The export
+  contains loans with `status = 'issued'` only.
+- **Rejected:** a loan importer; and including `requested` loans in the export.
+- **Why:** both readings come from the brief rather than from preference, and I had to go back to it
+  to settle them.
+
+  **Import.** Goal 7 says "Librarians can bulk-import **catalogue items** from a CSV file". A row is
+  an item. It carries no borrower, creates no loan, and writes no timeline event. When the milestone
+  was specified to me it was described in loan-shaped terms — borrower ids, conflicts with open
+  loans, archived items, `loan_events` — which would have meant building something the brief never
+  asks for while possibly not building the thing it does. Worth stopping over.
+
+  **Export.** Goal 7 asks for "every item currently out on loan, with its borrower and **due date**".
+  A requested loan has no due date at all — the database forbids one
+  (`loans_requested_state_chk` requires `due_on IS NULL` while a loan is requested). Including
+  requested loans would emit rows with an empty due-date column, contradicting the description of
+  the file. A requested item is also still on the shelf; it is not out. So "currently out" is
+  `issued`, which includes overdue loans because an overdue loan is issued, and excludes returned and
+  lost because the item has come back or gone for good.
+
+  An archived item appears if it has an issued loan. Archiving withdraws an item from circulation but
+  does not end a loan already in someone's hands, and those are precisely the ones a librarian needs
+  to chase.
+
+---
+
+## Decision 16 — Bulk operations compose the single-item services rather than reimplementing them
+
+- **Chose:** the importer calls `createItem()` per row; bulk return calls `returnLoan()` per loan.
+  Each row and each loan is its own transaction.
+- **Rejected:** bulk-specific validation and transition code; and a single transaction spanning the
+  whole file or batch.
+- **Why:** the brief requires partial success in both directions — "every valid row is still
+  imported", and a per-loan report of "what succeeded and what was rejected". A transaction around
+  the whole operation would make one bad row roll back every good one, which is the exact opposite.
+  Per-row transactions are not a performance compromise here; they are the requirement.
+
+  Composing rather than duplicating matters just as much. Bulk return inherits the conditional
+  UPDATE, the immutable `returned` event written in the same transaction, and the rejection messages
+  — including the brief's own example, "a loan that was already returned", which is produced by the
+  shared service rather than by a bulk-specific check. A second implementation would drift, and the
+  two would eventually disagree about what a return means.
+
+  The importer likewise shares the item schema with `POST /api/items`, so a CSV row is held to
+  exactly the rules a hand-created item is, and the unique index on `code` stays authoritative for
+  duplicates. That last point is what makes "the first occurrence of a duplicated code wins" fall
+  out for free: the first row has already committed, so the second hits the index exactly as an
+  existing-row duplicate would. No in-memory dedupe pass that could disagree with the database.
+
+---
+
+## Decision 17 — Repeated loan ids in a bulk return are rejected, not deduplicated
+
+- **Chose:** `400 duplicate_loan_id` naming the repeated ids, before any work starts.
+- **Rejected:** silently deduplicating (my first proposal); and processing each occurrence and
+  reporting the second as "already returned".
+- **Why:** the response is a **per-loan result**, so every entry should correspond to exactly one
+  requested loan. Deduplicating breaks that correspondence quietly. Processing both is worse: it
+  reports the caller's own repetition as though it were a fact about the data, so a client sees
+  "already returned" for a loan that was issued when the request was made.
+
+  Rejecting keeps the contract unambiguous and the failure actionable. The cost is that a caller who
+  builds a list with a duplicate gets nothing done until they fix it — acceptable, because that list
+  is a programming mistake rather than a plausible intent.
+
+---
+
+## Decision 18 — CSV output is escaped by hand; CSV input is parsed by a library
+
+- **Chose:** `csv-parse` for reading uploads; a small hand-written escaper for writing exports, with
+  a formula-injection guard.
+- **Rejected:** hand-rolling the parser; and adding a second dependency for output.
+- **Why:** the two directions are not equally hard. Reading CSV has genuinely awkward cases —
+  quoted fields containing commas, doubled quotes, embedded newlines, a BOM, CRLF — and getting one
+  wrong would mis-attribute a failure to the wrong row, which is the one thing the per-row report has
+  to get right. Writing is a handful of rules that fit in ten lines and are tested directly.
+
+  The injection guard prefixes a field beginning `=`, `+`, `-`, `@`, tab or CR with an apostrophe.
+  This file exists to be opened in Excel or Sheets, and item titles are user input, so a title of
+  `=HYPERLINK(...)` would otherwise be evaluated rather than displayed. Deliberately small: the
+  apostrophe is the whole measure, nothing is stripped, and no sanitisation framework is involved.
+
+  Uploads arrive as a raw `text/csv` body rather than multipart, which avoids a multipart dependency
+  entirely. The client is an SPA that reads the file itself and never needs a browser form encoding.
+
