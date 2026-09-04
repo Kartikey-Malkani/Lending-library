@@ -14,6 +14,7 @@ import { adminPrisma } from './admin.js';
 beforeEach(async () => {
   await adminPrisma.$executeRawUnsafe(`
     TRUNCATE TABLE
+      sessions,
       alert_dismissals,
       loan_events,
       loans,

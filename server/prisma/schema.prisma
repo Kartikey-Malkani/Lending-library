@@ -77,9 +77,31 @@ model User {
   custodianships     ItemCustodian[]  @relation("CustodianLibrarian")
   custodianAssignments ItemCustodian[] @relation("CustodianAssignedBy")
   alertDismissals    AlertDismissal[]
+  sessions           Session[]
 
   @@index([role])
   @@map("users")
+}
+
+/// A signed-in session.
+///
+/// Server-side by design. The cookie carries an opaque random token and this
+/// table carries only HMAC-SHA256(token, SESSION_SECRET), so a database dump
+/// yields no usable sessions, and logout genuinely invalidates access by
+/// deleting the row rather than merely asking the browser to forget a cookie.
+model Session {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// HMAC of the token the client holds. The token itself is never stored.
+  tokenHash String   @unique @map("token_hash")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
 }
 
 model CatalogueItem {
@@ -95,7 +117,11 @@ model CatalogueItem {
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz(3)
   createdById String    @map("created_by") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// `@default(now())` alongside `@updatedAt`: Prisma maintains this column
+  /// from the client, but the database also needs its own default so a plain
+  /// SQL INSERT works. Without declaring it here, every `migrate dev` would
+  /// generate a DROP DEFAULT to "correct" the drift and quietly undo it.
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   createdBy  User            @relation("ItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   loans      Loan[]
@@ -124,7 +150,8 @@ model Loan {
   returnedById String? @map("returned_by") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// See the note on CatalogueItem.updatedAt.
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   item       CatalogueItem    @relation(fields: [itemId], references: [id], onDelete: Restrict)
   borrower   User             @relation("LoanBorrower", fields: [borrowerId], references: [id], onDelete: Restrict)

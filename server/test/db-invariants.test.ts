@@ -406,3 +406,43 @@ describe('loan_events is append-only', () => {
     });
   });
 });
+
+describe('the application runtime uses the restricted role', () => {
+  it('does not connect as a superuser', async () => {
+    const rows = await prisma.$queryRawUnsafe<{ current_user: string; is_super: boolean }[]>(
+      `SELECT current_user, (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS is_super`,
+    );
+
+    expect(rows[0]!.is_super, 'the app must never serve requests as a superuser').toBe(false);
+  });
+
+  it('connects as a different role from the one that owns the schema', async () => {
+    const [app] = await prisma.$queryRawUnsafe<{ who: string }[]>(`SELECT current_user AS who`);
+    const [owner] = await adminPrisma.$queryRawUnsafe<{ who: string }[]>(`SELECT current_user AS who`);
+
+    expect(app!.who).not.toBe(owner!.who);
+  });
+
+  it('holds SELECT, INSERT and DELETE on sessions, but not UPDATE or TRUNCATE', async () => {
+    const rows = await prisma.$queryRawUnsafe<{ privilege_type: string }[]>(
+      `SELECT privilege_type
+         FROM information_schema.role_table_grants
+        WHERE table_name = 'sessions'
+          AND grantee = current_user
+        ORDER BY privilege_type`,
+    );
+    const granted = rows.map((r) => r.privilege_type);
+
+    expect(granted).toContain('SELECT');
+    expect(granted).toContain('INSERT');
+    expect(granted).toContain('DELETE');
+    // Nothing updates a session row, so the privilege is not granted.
+    expect(granted).not.toContain('UPDATE');
+    expect(granted).not.toContain('TRUNCATE');
+  });
+
+  it('cannot truncate any table, so the test reset has to run as the owner', async () => {
+    const error = await expectRejected(`TRUNCATE TABLE users CASCADE`);
+    expect(sqlState(error)).toBe('42501');
+  });
+});

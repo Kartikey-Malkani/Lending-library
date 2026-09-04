@@ -76,6 +76,15 @@ if (isProduction && sessionSecret === DEV_SESSION_SECRET_PLACEHOLDER) {
   );
 }
 
+/**
+ * bcrypt work factor.
+ *
+ * 10 everywhere that matters. The test suite drops to 4 purely for speed —
+ * every integration test creates users, and cost 10 turns a fast suite into a
+ * slow one. Keyed off NODE_ENV === 'test', so production can never select it.
+ */
+const bcryptCost = isTest ? 4 : 10;
+
 export const config = {
   nodeEnv,
   isProduction,
@@ -86,6 +95,24 @@ export const config = {
   /** True when the app connects as a role distinct from the schema owner. */
   usesLeastPrivilegeRole: adminDatabaseUrl !== databaseUrl,
   sessionSecret,
+  bcryptCost,
+
+  session: {
+    cookieName: 'll_session',
+    /** Seven days, in milliseconds. */
+    ttlMs: 7 * 24 * 60 * 60 * 1000,
+    /**
+     * `secure` would make the cookie unusable over plain HTTP, which is how the
+     * app runs locally. Production is HTTPS, so it is on there.
+     */
+    cookieSecure: isProduction,
+    /**
+     * 'lax' rather than 'strict': the SPA and API are same-origin in the
+     * deployed single-service setup, so 'lax' is sufficient CSRF protection for
+     * the state-changing routes while still surviving ordinary navigation.
+     */
+    cookieSameSite: 'lax',
+  },
 } as const;
 
 export type Config = typeof config;

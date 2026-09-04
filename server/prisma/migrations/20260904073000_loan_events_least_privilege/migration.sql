@@ -24,6 +24,11 @@ BEGIN
     REVOKE UPDATE, DELETE, TRUNCATE ON loan_events FROM lending_app;
 
     -- Prisma's migration bookkeeping is not the application's business.
-    REVOKE ALL ON _prisma_migrations FROM lending_app;
+    -- Guarded on existence: `prisma migrate dev` replays migrations into a
+    -- shadow database that has no _prisma_migrations table, and an
+    -- unconditional REVOKE there aborts the whole command.
+    IF to_regclass('public._prisma_migrations') IS NOT NULL THEN
+      REVOKE ALL ON _prisma_migrations FROM lending_app;
+    END IF;
   END IF;
 END $$;

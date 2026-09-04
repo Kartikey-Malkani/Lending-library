@@ -1,5 +1,5 @@
-import bcrypt from 'bcryptjs';
 import { type LoanStatus, type Prisma } from '@prisma/client';
+import { hashPassword } from '../src/auth/password.js';
 import { config } from '../src/config.js';
 import { createAdminClient } from '../src/db.js';
 
@@ -18,8 +18,6 @@ import { createAdminClient } from '../src/db.js';
 // Seeding truncates every table, so it needs the owner role, not the
 // least-privilege role the application runs as.
 const prisma = createAdminClient();
-
-const BCRYPT_COST = 10;
 
 /**
  * One clock for the whole run.
@@ -196,7 +194,7 @@ async function main(): Promise<void> {
         email: user.email.toLowerCase(),
         name: user.name,
         role: user.role,
-        passwordHash: await bcrypt.hash(user.password, BCRYPT_COST),
+        passwordHash: await hashPassword(user.password),
       },
     });
     userIds.set(user.key, created.id);

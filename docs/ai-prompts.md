@@ -215,6 +215,87 @@ guarantee the tests exist to prove.
 
 ---
 
+## 4. Milestone 2 — authentication, role guards and the authorization matrix
+
+### Prompt
+
+Two prompts. First, a planning one:
+
+> Proceed to Milestone 2: authentication, role guards, and the authorization matrix. Before writing
+> application code, first inspect the existing Milestone 1 implementation and the assignment
+> requirements. Then give me a concise implementation plan for Milestone 2 and STOP for review.
+> [...] Members must not be able to obtain librarian capabilities by manipulating request parameters,
+> IDs, or frontend state. [...] Do not over-engineer. Do not add OAuth, JWT, registration, email
+> verification, password reset, MFA, rate limiting, or external identity providers unless the
+> assignment actually requires them.
+
+Then, after review, an approval that settled the open questions — database-backed sessions, keep the
+HMAC, catalogue read for both roles, dashboard and export librarian-only, sessions granted
+`SELECT, INSERT, DELETE` and nothing more.
+
+### What I got
+
+The plan surfaced a conflict I had not noticed when writing the Phase 1 architecture: **Phase 1 chose
+stateless JWTs, and this milestone requires "logout invalidates the session".** A stateless token
+cannot be revoked — logout can clear the browser's cookie, but the token stays valid until it
+expires. That is a genuine contradiction between my own earlier plan and the requirement, and it
+became the reversal now recorded as Decision 5 in `docs/decisions.md`.
+
+Implementation went to plan: a `sessions` table, opaque random tokens with only the HMAC stored, a
+capability matrix as data, guards that read identity solely from the session, and ownership handled
+separately from role.
+
+### What went wrong
+
+Four things, three of which were near-misses rather than visible failures.
+
+1. **A migration that was not replayable.** `prisma migrate dev` failed with "The underlying table
+   for model `_prisma_migrations` does not exist". The cause was in Milestone 1's least-privilege
+   migration, which does `REVOKE ALL ON _prisma_migrations` — fine against a real database, but
+   `migrate dev` replays migrations into a *shadow* database that has no such table, so the whole
+   command aborted. I confirmed the migrations still replay cleanly under `migrate deploy` on a fresh
+   database before touching anything, then guarded the statement with a `to_regclass` existence
+   check. Committed migrations are normally untouchable, so I verified Prisma's checksum algorithm
+   (plain SHA-256 of the file) and updated the recorded checksum rather than destroying the
+   development database.
+
+2. **Prisma tried to silently undo an earlier fix.** The generated `sessions` migration also
+   contained `ALTER TABLE ... ALTER COLUMN "updated_at" DROP DEFAULT` for two unrelated tables —
+   Prisma "correcting" drift, because the database default added in Milestone 1 was not declared in
+   `schema.prisma`. Deleting those two lines would have fixed this migration and left the trap armed
+   for the next one. I declared `@default(now())` alongside `@updatedAt` in the schema instead, so
+   Prisma stops seeing drift at all, and regenerated.
+
+3. **Wrong Express types since Milestone 1.** I had installed `@types/express@5` against
+   `express@4`. It surfaced as a type error on `req.params`, and pinning the types to v4 then exposed
+   a second conflict: `@types/cookie-parser` pulls in the v5 types, so the middleware stack would not
+   typecheck. Rather than pin transitive type versions across the tree, I dropped `cookie-parser` for
+   a ten-line cookie reader — which is why a dependency visible in the git history is absent from the
+   final `package.json` (Decision 7).
+
+4. **Two failing tests, one of which was a good failure.** The expiry test tried to `UPDATE` a
+   session row through the application's database connection and got `42501 permission denied` —
+   because the migration deliberately grants `SELECT, INSERT, DELETE` and no `UPDATE`. The privilege
+   model was right and the test was wrong. I moved that write to the owner connection rather than
+   granting `UPDATE` to make the test convenient. The other failure was an ordinary fixture mistake.
+
+Final state: 58 tests passing, both workspaces typechecking, live authentication verified against the
+real database.
+
+### Lesson
+
+The valuable failure here was the one where the code refused to do what the test asked. It would have
+taken one word in a migration to make that test pass — grant `UPDATE` — and the privilege model would
+have been quietly weakened to suit a test that had no business updating a session row. Test
+convenience is a bad reason to widen a permission, and the same instinct is what turns "members can
+see their loans" into "members can see all loans".
+
+The near-misses share a shape too: two of them (the `DROP DEFAULT`, the type mismatch) were tools
+confidently offering to undo earlier work. Reading generated migrations before applying them is not
+optional.
+
+---
+
 ## Not yet written
 
-Milestones 2 onward. This file is appended to as each one lands.
+Milestones 3 onward. This file is appended to as each one lands.
