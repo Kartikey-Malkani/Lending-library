@@ -1,0 +1,27 @@
+# Local development database only. Production uses a managed Postgres
+# (connection string supplied via DATABASE_URL); this file is never deployed.
+#
+# Host port 5433 is deliberate: it avoids clashing with a Postgres someone may
+# already have on the default 5432.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: lending_library_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lending
+      POSTGRES_PASSWORD: lending_dev_password
+      POSTGRES_DB: lending_library
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lending -d lending_library"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db_data:

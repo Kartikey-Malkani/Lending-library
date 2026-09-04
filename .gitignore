@@ -10,3 +10,9 @@ venv/
 .env.*.local
 *.log
 .DS_Store
+
+# Added for this project
+.env.test
+coverage/
+*.tsbuildinfo
+.vite/

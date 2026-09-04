@@ -1,0 +1,199 @@
+// Schema for the asset lending library.
+//
+// Prisma models the tables, columns and foreign keys. Three invariants that
+// Prisma cannot express live in hand-written SQL inside the migration instead:
+//
+//   1. state/timestamp coherence CHECK constraints on `loans`
+//   2. a PARTIAL UNIQUE INDEX enforcing at most one open loan per item
+//   3. a trigger making `loan_events` append-only
+//
+// See prisma/migrations/*/migration.sql. They are in the database rather than
+// in application code because they must hold under concurrency and regardless
+// of which code path writes the row.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Roles are a native Postgres enum, so an unknown role is unstorable.
+enum Role {
+  librarian
+  member
+
+  @@map("role")
+}
+
+/// The lifecycle states a loan can hold.
+///
+/// There is deliberately no `overdue` member. Overdue is not a state: a loan is
+/// treated as overdue whenever it is still `issued` past its due date, computed
+/// at read time. Making it a Postgres enum means the database itself rejects an
+/// attempt to store `overdue`, so the rule cannot be broken by any future code
+/// path, migration or manual query.
+///
+/// Declaration order is also the lifecycle order, which gives "sort by status"
+/// a meaningful ordering for free rather than an alphabetical one.
+enum LoanStatus {
+  requested
+  issued
+  returned
+  lost
+
+  @@map("loan_status")
+}
+
+/// The kinds of entry that can appear on a loan's timeline. Mirrors LoanStatus
+/// today, but kept as its own type: the timeline records transitions, and the
+/// two would diverge the moment a non-status event is ever recorded.
+enum LoanEventType {
+  requested
+  issued
+  returned
+  lost
+
+  @@map("loan_event_type")
+}
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Stored lower-cased by the application so the plain unique index gives
+  /// case-insensitive uniqueness without needing the citext extension.
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  role         Role
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  borrowedLoans      Loan[]           @relation("LoanBorrower")
+  issuedLoans        Loan[]           @relation("LoanIssuedBy")
+  returnedLoans      Loan[]           @relation("LoanReturnedBy")
+  createdItems       CatalogueItem[]  @relation("ItemCreatedBy")
+  loanEvents         LoanEvent[]
+  custodianships     ItemCustodian[]  @relation("CustodianLibrarian")
+  custodianAssignments ItemCustodian[] @relation("CustodianAssignedBy")
+  alertDismissals    AlertDismissal[]
+
+  @@index([role])
+  @@map("users")
+}
+
+model CatalogueItem {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title    String
+  category String
+  /// The identifying code from the brief. Unique, and stored upper-cased by the
+  /// application so uniqueness is effectively case-insensitive.
+  code     String @unique
+
+  /// Soft archive. NULL means active. A nullable timestamp rather than a
+  /// boolean because "when was this archived" costs nothing extra to keep.
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdById String    @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy  User            @relation("ItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  loans      Loan[]
+  custodians ItemCustodian[]
+
+  @@index([archivedAt])
+  @@index([category])
+  @@map("catalogue_items")
+}
+
+model Loan {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  itemId     String     @map("item_id") @db.Uuid
+  borrowerId String     @map("borrower_id") @db.Uuid
+  status     LoanStatus
+
+  requestedAt DateTime  @default(now()) @map("requested_at") @db.Timestamptz(3)
+  issuedAt    DateTime? @map("issued_at") @db.Timestamptz(3)
+  /// A DATE, not a timestamp. "Past its due date" is a calendar comparison, and
+  /// a date column keeps time-of-day out of the most-read rule in the system.
+  dueOn       DateTime? @map("due_on") @db.Date
+  returnedAt  DateTime? @map("returned_at") @db.Timestamptz(3)
+  lostAt      DateTime? @map("lost_at") @db.Timestamptz(3)
+
+  issuedById   String? @map("issued_by") @db.Uuid
+  returnedById String? @map("returned_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  item       CatalogueItem    @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  borrower   User             @relation("LoanBorrower", fields: [borrowerId], references: [id], onDelete: Restrict)
+  issuedBy   User?            @relation("LoanIssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
+  returnedBy User?            @relation("LoanReturnedBy", fields: [returnedById], references: [id], onDelete: Restrict)
+  events     LoanEvent[]
+  dismissals AlertDismissal[]
+
+  @@index([borrowerId])
+  @@index([status])
+  @@index([dueOn])
+  @@index([requestedAt])
+  @@index([itemId, requestedAt])
+  /// Serves the overdue lookups behind the alerts list, the nav badge and the
+  /// dashboard, all of which are `status = issued AND due_on < today`.
+  @@index([status, dueOn])
+  @@map("loans")
+}
+
+/// Append-only record of every loan state change: what happened, who did it,
+/// when, and any note the librarian left. Rows are never updated or deleted —
+/// enforced by a database trigger, not only by the absence of an endpoint.
+model LoanEvent {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  loanId    String        @map("loan_id") @db.Uuid
+  type      LoanEventType
+  actorId   String        @map("actor_id") @db.Uuid
+  note      String?
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  loan  Loan @relation(fields: [loanId], references: [id], onDelete: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([loanId, createdAt])
+  @@map("loan_events")
+}
+
+/// Many-to-many: an item can have any number of librarian custodians, and a
+/// librarian can be custodian for any number of items.
+model ItemCustodian {
+  itemId       String   @map("item_id") @db.Uuid
+  librarianId  String   @map("librarian_id") @db.Uuid
+  assignedAt   DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+  assignedById String?  @map("assigned_by") @db.Uuid
+
+  item       CatalogueItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  librarian  User          @relation("CustodianLibrarian", fields: [librarianId], references: [id], onDelete: Restrict)
+  assignedBy User?         @relation("CustodianAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@id([itemId, librarianId])
+  @@index([librarianId])
+  @@map("item_custodians")
+}
+
+/// A librarian dismissing an overdue alert.
+///
+/// Keyed on the LOAN, not the item. That is the whole mechanism behind the
+/// brief's rule that the alert returns if the item is issued again and goes
+/// overdue on the new loan: a later issue is a new loan row, so no dismissal
+/// exists for it. Also keyed on the user, so one librarian cannot hide an
+/// overdue item from the rest of the team.
+model AlertDismissal {
+  loanId      String   @map("loan_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  dismissedAt DateTime @default(now()) @map("dismissed_at") @db.Timestamptz(3)
+
+  loan Loan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([loanId, userId])
+  @@map("alert_dismissals")
+}
