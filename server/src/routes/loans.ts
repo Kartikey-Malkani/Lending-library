@@ -1,16 +1,28 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { assertCanAccessOwnedResource, currentUser, requireCapability } from '../auth/middleware.js';
+import {
+  assertCanAccessOwnedResource,
+  currentUser,
+  requireCapability,
+  resolveBorrowerScope,
+} from '../auth/middleware.js';
 import {
   createIssuedLoan,
   getLoanWithTimeline,
   issueLoan,
+  listLoans,
   markLoanLost,
   requestLoan,
   returnLoan,
 } from '../loans/service.js';
 import { asyncHandler } from '../http/errors.js';
-import { parseBody, parseUuidParam } from '../http/validation.js';
+import {
+  paginationSchema,
+  parseBody,
+  parseQuery,
+  parseUuidParam,
+  sortDirectionSchema,
+} from '../http/validation.js';
 
 export const loansRouter = Router();
 
@@ -41,6 +53,22 @@ const dueOnSchema = z
   .transform((value) => new Date(`${value}T00:00:00.000Z`))
   .refine((date) => !Number.isNaN(date.getTime()), { message: 'must be a real date' });
 
+/**
+ * The loans list query.
+ *
+ * `sort` and `dir` are whitelists, so an unknown key is a 400 rather than
+ * something interpolated into a query or silently ignored. `status` accepts the
+ * four real statuses plus `overdue`, which is derived rather than stored.
+ */
+const listQuerySchema = paginationSchema.extend({
+  search: z.string().trim().min(1).max(200).optional(),
+  status: z.enum(['requested', 'issued', 'returned', 'lost', 'overdue']).optional(),
+  itemId: z.string().uuid().optional(),
+  borrowerId: z.string().uuid().optional(),
+  sort: z.enum(['dueOn', 'requestedAt', 'status']).default('requestedAt'),
+  dir: sortDirectionSchema,
+});
+
 const requestSchema = z.object({ itemId: z.string().uuid() }).strict();
 
 const createIssuedSchema = z
@@ -54,6 +82,27 @@ const createIssuedSchema = z
 
 const issueSchema = z.object({ dueOn: dueOnSchema, note: noteSchema }).strict();
 const noteOnlySchema = z.object({ note: noteSchema }).strict();
+
+/**
+ * One list of loans across the whole catalogue.
+ *
+ * Registered before `/loans/:id` for readability; the two paths do not actually
+ * collide.
+ *
+ * Members are scoped to their own loans by the server, not by asking nicely: a
+ * `borrowerId` in the query string is discarded for them, so changing it can
+ * never widen what they see. Librarians may use it as a real filter.
+ */
+loansRouter.get(
+  '/loans',
+  requireCapability('loan:read'),
+  asyncHandler(async (req, res) => {
+    const query = parseQuery(req, listQuerySchema);
+    const borrowerId = resolveBorrowerScope(req, query.borrowerId);
+
+    res.json(await listLoans({ ...query, borrowerId }));
+  }),
+);
 
 /**
  * A member requesting an item for themselves.

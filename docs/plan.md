@@ -16,8 +16,8 @@ The order is deliberate: nothing is built before the thing it depends on can be 
 | 1 | Scaffold, schema, database-enforced invariants | done | `5ec9e81` |
 | 2 | Sessions, role guards, authorization matrix | done | `ec04c16` |
 | 3 | Catalogue CRUD, archive/restore, custodians | done | `7bda8f8` |
-| 4 | Loan lifecycle, timeline, overdue derivation | done | *pending review* |
-| 5 | Loans list: search, filters, sorting, pagination | planned | — |
+| 4 | Loan lifecycle, timeline, overdue derivation | done | `f2be968` |
+| 5 | Loans list: search, filters, sorting, pagination | done | *pending review* |
 | 6 | Bulk CSV import, bulk return, export | planned | — |
 | 7 | Dashboard and overdue alerts | planned | — |
 | 8 | Frontend | planned | — |
@@ -41,7 +41,9 @@ first. Milestone 3 left one requirement explicitly untestable — "an archived i
 loan" — recorded as an `it.todo` rather than faked, and turned into real tests in milestone 4.
 
 **Lists after lifecycle.** The loans list is goal 6's search/filter/sort/pagination requirement. A
-"minimal" version in milestone 4 would have been built twice, so only `GET /loans/:id` shipped there.
+"minimal" version in milestone 4 would have been built twice, so only `GET /loans/:id` shipped there
+and the full list followed in milestone 5, reusing `resolveBorrowerScope` — written and probe-tested
+back in milestone 2, and given its first real route here.
 
 ## Estimates versus actuals
 
@@ -53,6 +55,7 @@ Recorded per milestone as it lands. The budget is ~12 hours total.
 | 2 | 1 h | ~1.5 h | A migration that was not replayable, and an Express types mismatch inherited from M1 |
 | 3 | 1 h | ~1 h | Came in on estimate; no migration turned out to be needed |
 | 4 | 1.5 h | ~2 h | The extra went on discovering the race tests were vacuous, and on a real timeline-ordering bug |
+| 5 | 1 h | ~1.25 h | No migration needed again; the extra went on a second vacuous test, this time for pagination ordering |
 
 Running total is ahead of the original plan's estimate for the same point, mostly because each
 milestone has been planned before being written.
@@ -66,6 +69,9 @@ milestone has been planned before being written.
 - **Milestone 3 needed no migration.** Inspecting the schema before planning showed milestone 1 had
   already built everything the catalogue and custodians required.
 - **Milestone 4 needed no migration either**, for the same reason.
+- **Milestone 5 needed no migration either.** The indexes on `status`, `due_on`, `requested_at`,
+  `borrower_id` and `(status, due_on)` from milestone 1 already cover every filter and sort the
+  loans list offers.
 
 ## Known gaps, carried forward deliberately
 
@@ -74,8 +80,10 @@ milestone has been planned before being written.
   revisit with more time.
 - **No cleanup of expired session rows.** Expiry is checked on read, so this is housekeeping, not
   correctness.
-- **Overdue is derived in TypeScript today.** Milestone 5 needs the same rule in SQL for filtering and
-  sorting; the two must agree, and `isOverdue` in `src/loans/views.ts` is the single statement of it.
+- **A user lookup endpoint is missing.** `POST /api/loans` takes a `borrowerId` and the loans list
+  filters by one, but nothing exposes user ids, so a librarian cannot discover who to issue to.
+  Deliberately deferred out of milestone 5 to keep it scoped to goal 6; the frontend milestone will
+  need the smallest possible librarian-only endpoint.
 - **`GET /items/:id` returns a role-dependent shape** — custodians and loan history for librarians,
   neither for members.
 

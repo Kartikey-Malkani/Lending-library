@@ -456,6 +456,76 @@ suite that could not tell right from wrong.
 
 ---
 
+## 7. Milestone 5 — the loans list
+
+### Prompt
+
+I asked for a plan first, as usual. The approval trimmed it, and the trimming was right:
+
+> DO NOT add GET /api/users in M5. The missing user lookup is a real usability gap, but it is outside
+> Goal 6 and adding a new API/auth surface now expands scope. Defer it to the frontend milestone.
+> [...] Keep search exactly as specified: item title, borrower name/email. Do NOT add item code
+> search.
+
+and, on the parts that had to be exact:
+
+> `status=issued` MUST include overdue loans because overdue is derived, not a stored lifecycle
+> status. [...] Reuse the existing todayUtc()/isOverdue semantics so the date boundary is identical
+> to Milestone 4. [...] Status sorting MUST use lifecycle order [...] with overdue NOT becoming a
+> fifth lifecycle state.
+
+Both scope cuts were correct. I had proposed a user-lookup endpoint because I had noticed a genuine
+gap — nothing in the API exposes user ids, so a librarian cannot discover who to issue a loan to —
+but it belongs to the milestone that needs it, not to goal 6.
+
+### What I got
+
+`GET /api/loans` with everything in the database: search across the joined item title and borrower
+name/email, filters for status, item and borrower, three sort keys, and pagination with a true total.
+No migration — the indexes from milestone 1 already covered every filter and sort.
+
+The one design point worth the effort was overdue. Milestone 4 derived it in TypeScript; the list has
+to filter and sort by it in SQL, and that is exactly where one rule quietly becomes two and they
+drift at the boundary. Passing a single `asOf` through both the query predicate and the row mapper
+means there is one date computation per request, not two (Decision 13).
+
+All 37 tests passed on the first run.
+
+### What went wrong
+
+**A second vacuous test, and I only found it because milestone 4 taught me to look.**
+
+After the first green run I mutated four things on purpose to see whether the suite noticed:
+
+```
+overdue boundary lt -> lte          2 failed   caught
+dueOn null placement removed        1 failed   caught
+skip/take removed (no pagination)   6 failed   caught
+id tiebreak -> a different column   0 failed   SURVIVED
+```
+
+So I tried the more realistic bug — removing the ordering tiebreak entirely — and all 37 tests still
+passed. Postgres happened to return that small table in a consistent order, so my "stable across two
+requests, adjacent pages disjoint" test was measuring the query planner's habits rather than the
+implementation.
+
+The fix was to assert something a broken implementation cannot accidentally satisfy. Loan ids are
+random uuids, so a result set ordered by anything else — insertion order, physical order, another
+column — is essentially never *also* in id order. The new test makes every row tie on the sort field
+and then asserts the rows come back in id order. It fails without the tiebreak and passes with it.
+
+### Lesson
+
+This is the second milestone running where the first green test run was the least trustworthy moment,
+and both times the same technique found the hole: break the implementation deliberately and check
+that the tests notice. It costs about five minutes.
+
+The pattern in both cases was also the same — a test asserting a *consequence* ("the pages were
+stable", "no duplicate loan appeared") when the consequence can occur by luck. The test that works
+asserts something only the correct implementation produces.
+
+---
+
 ## Not yet written
 
-Milestones 5 onward. This file is appended to as each one lands.
+Milestones 6 onward. This file is appended to as each one lands.

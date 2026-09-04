@@ -1,7 +1,16 @@
 import type { Loan, LoanStatus, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { ApiError, isUniqueViolationOn } from '../http/errors.js';
-import { type LoanEventView, type LoanView, toEventView, toLoanView } from './views.js';
+import type { Paginated } from '../http/validation.js';
+import {
+  type LoanEventView,
+  type LoanListRow,
+  type LoanView,
+  toEventView,
+  toLoanListRow,
+  toLoanView,
+  todayUtc,
+} from './views.js';
 
 /**
  * The loan lifecycle.
@@ -335,6 +344,127 @@ export async function markLoanLost(input: {
 }
 
 // --- Reads -----------------------------------------------------------------
+
+/**
+ * The loans list: goal 6.
+ *
+ * Every part of this — search, filters, sorting, pagination and the total —
+ * happens in the database. Nothing fetches the full set and narrows it in
+ * memory, which is the failure the brief names explicitly ("do not load every
+ * loan into the browser and filter there"); doing it in the server's memory
+ * instead would be the same mistake one layer down.
+ */
+
+export type LoanSortField = 'dueOn' | 'requestedAt' | 'status';
+
+/** The four real statuses, plus the derived pseudo-status the UI filters by. */
+export type LoanStatusFilter = LoanStatus | 'overdue';
+
+export type ListLoansOptions = {
+  search?: string | undefined;
+  status?: LoanStatusFilter | undefined;
+  itemId?: string | undefined;
+  /** Already resolved by the route: a member can only ever see their own. */
+  borrowerId?: string | undefined;
+  sort: LoanSortField;
+  dir: 'asc' | 'desc';
+  page: number;
+  pageSize: number;
+  /** One instant for both the SQL overdue predicate and the derived view. */
+  asOf?: Date | undefined;
+};
+
+function buildWhere(options: ListLoansOptions, asOf: Date): Prisma.LoanWhereInput {
+  const where: Prisma.LoanWhereInput = {};
+
+  if (options.borrowerId) where.borrowerId = options.borrowerId;
+  if (options.itemId) where.itemId = options.itemId;
+
+  if (options.status === 'overdue') {
+    /*
+     * Overdue is not a stored status and never will be — the enum has no such
+     * member. It is expressed here as the same predicate `isOverdue` uses in
+     * TypeScript, evaluated against the same `asOf`, so the SQL filter and the
+     * `isOverdue` flag on every returned row cannot disagree.
+     *
+     * Note the consequence, which is intended: `status=issued` returns overdue
+     * loans too, because an overdue loan IS issued. `status=overdue` is the
+     * subset of those whose due date has passed.
+     */
+    where.status = 'issued';
+    where.dueOn = { lt: todayUtc(asOf) };
+  } else if (options.status) {
+    where.status = options.status;
+  }
+
+  if (options.search) {
+    // The brief asks for search over "the item title and borrower". Borrower
+    // covers name and email; item code is deliberately not included here, since
+    // the catalogue list already searches it.
+    where.OR = [
+      { item: { title: { contains: options.search, mode: 'insensitive' } } },
+      { borrower: { name: { contains: options.search, mode: 'insensitive' } } },
+      { borrower: { email: { contains: options.search, mode: 'insensitive' } } },
+    ];
+  }
+
+  return where;
+}
+
+function buildOrderBy(
+  sort: LoanSortField,
+  dir: 'asc' | 'desc',
+): Prisma.LoanOrderByWithRelationInput[] {
+  // `id` last, always. Loans routinely share a due date or a status, and
+  // without a deterministic final key offset pagination silently skips and
+  // repeats rows between pages.
+  const tieBreak: Prisma.LoanOrderByWithRelationInput = { id: 'asc' };
+
+  switch (sort) {
+    case 'dueOn':
+      // Requested loans have no due date. Null placement is pinned rather than
+      // left to Postgres, whose default flips between ASC and DESC: a loan with
+      // no due date is not "due later" or "due earlier", it is not in the
+      // sequence at all, so it sits at the end either way.
+      return [{ dueOn: { sort: dir, nulls: 'last' } }, tieBreak];
+    case 'requestedAt':
+      return [{ requestedAt: dir }, tieBreak];
+    case 'status':
+      // Lifecycle order, not alphabetical, because loan_status is a Postgres
+      // enum declared requested < issued < returned < lost and Postgres sorts
+      // enums by declaration order. Alphabetically this would come out
+      // issued, lost, requested, returned — which reads as nonsense.
+      return [{ status: dir }, tieBreak];
+  }
+}
+
+export async function listLoans(options: ListLoansOptions): Promise<Paginated<LoanListRow>> {
+  const asOf = options.asOf ?? new Date();
+  const where = buildWhere(options, asOf);
+
+  const [rows, total] = await Promise.all([
+    prisma.loan.findMany({
+      where,
+      orderBy: buildOrderBy(options.sort, options.dir),
+      skip: (options.page - 1) * options.pageSize,
+      take: options.pageSize,
+      include: {
+        item: { select: { id: true, title: true, code: true, archivedAt: true } },
+        borrower: { select: { id: true, name: true, email: true } },
+      },
+    }),
+    // Counted over the same `where`, so `total` is every match before
+    // pagination rather than the size of the page just returned.
+    prisma.loan.count({ where }),
+  ]);
+
+  return {
+    rows: rows.map((row) => toLoanListRow(row, asOf)),
+    total,
+    page: options.page,
+    pageSize: options.pageSize,
+  };
+}
 
 export async function getLoanOrThrow(loanId: string): Promise<Loan> {
   const loan = await prisma.loan.findUnique({ where: { id: loanId } });

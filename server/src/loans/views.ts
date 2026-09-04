@@ -79,3 +79,38 @@ export function toEventView(
     actor: { id: event.actor.id, name: event.actor.name },
   };
 }
+
+/**
+ * A row in the loans list.
+ *
+ * Carries the joined item and borrower so a table renders from one request
+ * rather than one request per row. `isOverdue` is derived here exactly as it is
+ * for a single loan — same helper, same instant.
+ */
+export type LoanListRow = LoanView & {
+  item: { id: string; title: string; code: string; isArchived: boolean };
+  borrower: { id: string; name: string; email: string };
+};
+
+type LoanWithParties = Loan & {
+  item: { id: string; title: string; code: string; archivedAt: Date | null };
+  borrower: { id: string; name: string; email: string };
+};
+
+export function toLoanListRow(loan: LoanWithParties, asOf: Date): LoanListRow {
+  return {
+    ...toLoanView(loan, asOf),
+    item: {
+      id: loan.item.id,
+      title: loan.item.title,
+      code: loan.item.code,
+      isArchived: loan.item.archivedAt !== null,
+    },
+    borrower: {
+      id: loan.borrower.id,
+      name: loan.borrower.name,
+      email: loan.borrower.email,
+    },
+  };
+}
+

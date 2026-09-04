@@ -328,3 +328,66 @@ It is deliberately not added now: it would be a migration to solve a problem the
 does not have, and the enum's ordering is a property chosen on purpose in milestone 1 rather than a
 coincidence being exploited. The guard against forgetting is the test, which fails the day the
 assumption stops being true.
+
+---
+
+## Decision 13 — Overdue is one rule with two expressions, bound to a single instant
+
+- **Chose:** the loans list expresses overdue as `status = 'issued' AND due_on < todayUtc(asOf)`,
+  built from the **same** `todayUtc()` helper the TypeScript `isOverdue` uses, with one `asOf` passed
+  to both the query and the row mapper.
+- **Rejected:** writing the SQL predicate independently — the obvious `dueOn: { lt: new Date() }` —
+  and letting the two definitions live side by side.
+- **Why:** milestone 4 derived overdue in TypeScript; milestone 5 has to filter and sort by it in the
+  database. That is the moment a single rule quietly becomes two, and they drift at the boundary
+  first: a `lt` that should be `lte`, or a local date where a UTC one was meant, and the list starts
+  disagreeing with the badge on exactly the loans due today.
+
+  Passing one `asOf` through both paths means they cannot disagree even in principle — there is one
+  date computation per request, not two. `loans-list.test.ts` also cross-checks them directly: it
+  seeds loans due at −30, −1, 0, +1 and +30 days plus a closed loan long past its date, then asserts
+  the set the SQL filter returns is exactly the set the TypeScript derivation calls overdue.
+
+  Mutating `lt` to `lte` fails two tests, which is how I know the check is real rather than
+  decorative.
+
+  The related consequence, tested explicitly: `status=issued` **includes** overdue loans, because an
+  overdue loan is issued. `status=overdue` is the subset. Filtering them apart would have meant
+  inventing a fifth lifecycle state, which is exactly what the brief forbids.
+
+---
+
+## Decision 14 — Sorting keys are whitelisted, ties break on id, and nulls are pinned
+
+- **Chose:** `sort` limited to `dueOn | requestedAt | status` and `dir` to `asc | desc`, both
+  rejected with 400 when unrecognised; `id` appended as the final ordering key on every sort;
+  `nulls: 'last'` stated explicitly for `dueOn` in both directions.
+- **Rejected:** accepting arbitrary column names; relying on Postgres's default null placement;
+  treating "two identical requests return the same rows" as proof the ordering is deterministic.
+- **Why:** three separate hazards, each with its own reason.
+
+  **Whitelisting** keeps a caller from ordering by a column they should not be able to observe —
+  `password_hash` is the obvious one — and means nothing user-supplied reaches the query builder as
+  an identifier.
+
+  **Null placement** cannot be left to the default because Postgres flips it: `NULLS LAST` for `ASC`,
+  `NULLS FIRST` for `DESC`. Requested loans have no due date, and a loan with no due date is not
+  "due earliest" or "due latest" — it is not in the sequence at all, so it belongs at the end
+  whichever way the list is sorted. Pinned, and tested in both directions.
+
+  **The id tiebreak** is the one I nearly got wrong. Loans routinely share a status or a due date,
+  and without a deterministic final key, offset pagination silently skips and repeats rows. I wrote
+  a stability test — same request twice, and adjacent pages disjoint — and it passed. Then I removed
+  the tiebreak entirely and it *still* passed: Postgres returned that small table in a consistent
+  order anyway, so the test proved nothing, exactly like the vacuous race tests in milestone 4.
+
+  The test that does discriminate asserts something specific: when the sort field is identical across
+  every row, the results come back **in id order**. Loan ids are random uuids, so any other ordering
+  — insertion order, physical order, another column — is essentially never also id order. That test
+  fails without the tiebreak and passes with it.
+
+  Status sorting needs no special expression: `loan_status` is a Postgres enum declared in lifecycle
+  order, and Postgres sorts enums by declaration order, so ascending gives
+  requested → issued → returned → lost. Alphabetically it would be issued, lost, requested, returned,
+  which reads as nonsense; there is a test asserting the lifecycle order rather than trusting it.
+
