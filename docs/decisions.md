@@ -480,3 +480,70 @@ assumption stops being true.
   Uploads arrive as a raw `text/csv` body rather than multipart, which avoids a multipart dependency
   entirely. The client is an SPA that reads the file itself and never needs a browser form encoding.
 
+---
+
+## Decision 19 — One `asOf` per dashboard request, and the week boundary computed in TypeScript
+
+- **Chose:** capture a single `asOf` when the request arrives, derive the overdue boundary, the
+  "this week" window and all eight chart bucket edges from it, and pass those edges into SQL as
+  parameters.
+- **Rejected:** letting each query compute its own `now`, and using Postgres `date_trunc('week', …)`
+  to find the week boundaries inside each query.
+- **Why:** the dashboard shows "loans returned this week" as a headline **and** as the last bar of
+  the eight-week chart. Those are the same number, and if the two queries each ask the clock
+  separately they can straddle midnight or a Monday and disagree — on one screen, by one. That reads
+  as a bug in the data rather than a rounding artefact, and it is the kind of thing nobody can
+  reproduce later.
+
+  Computing the ISO week start in TypeScript rather than in SQL keeps every boundary derived from one
+  value in one timezone, and makes `generate_series` take explicit parameters instead of consulting
+  the database clock. `loans-list.test.ts` and the alerts list use the same `todayUtc()` helper, so
+  the overdue boundary is stated once for the whole system.
+
+  A test asserts the headline equals the final chart bucket. Mutating the week calculation to a
+  trailing seven days fails it.
+
+---
+
+## Decision 20 — Custodian counts do not sum to the loan total, and that is the correct answer
+
+- **Chose:** count a loan once for **each** custodian of its item, and put loans on items with no
+  custodian into an explicit `Unassigned` bucket.
+- **Rejected:** counting each loan once by picking a "primary" custodian; and omitting items that
+  have no custodian.
+- **Why:** custodianship is many-to-many by requirement — "any number of librarians can be assigned
+  to a catalogue item as its custodians". If two librarians are both responsible for an item, a
+  breakdown that shows the loan under only one of them is wrong for the other, and choosing which one
+  would mean inventing a precedence rule the brief does not have.
+
+  So the figures can exceed the number of loans. On the seeded data: 20 loans, custodian counts
+  summing to 23, because two items have two custodians each. That is not double counting to be
+  corrected — it answers "how much is each custodian responsible for", which is a different question
+  from "how many loans are there", and the response type says so.
+
+  The `Unassigned` bucket is the other half. Four seeded items have no custodian; without that bucket
+  their loans vanish from the breakdown and nothing looks wrong. It is implemented as a `LEFT JOIN`
+  through the join table, and mutating it to an inner join fails two tests.
+
+---
+
+## Decision 21 — Dismissing an alert requires the loan to be overdue *now*, checked in the write itself
+
+- **Chose:** `INSERT ... SELECT ... WHERE status = 'issued' AND due_on < today ... ON CONFLICT DO
+  NOTHING` — one statement that both checks and writes. A loan that is not currently overdue gets
+  `409 not_overdue`.
+- **Rejected:** reading the loan, deciding, then inserting; and allowing dismissal of any loan.
+- **Why:** a dismissal must mean "I have seen this alert and dealt with it". If a librarian could
+  dismiss a loan that is issued but not yet due, the row would sit there and silently mute the alert
+  **when the loan later became overdue** — the warning would simply never appear. Requiring the loan
+  to be overdue at the moment of dismissal closes that.
+
+  Doing the check inside the insert removes the window entirely: there is no point at which a
+  decision has been made but not yet written. That matters more than it looks, because this is the
+  one place in the system where a stale read could create a row that suppresses a future warning.
+
+  The opposite staleness is harmless and deliberately unguarded: if the loan is returned a moment
+  after the insert, the dismissal refers to a loan that can never alert again — `returned` and `lost`
+  are terminal, and a later loan on the same item is a different row. That asymmetry is why no lock
+  is needed here, unlike the archive/loan race in milestone 4.
+

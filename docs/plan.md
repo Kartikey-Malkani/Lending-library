@@ -18,8 +18,8 @@ The order is deliberate: nothing is built before the thing it depends on can be 
 | 3 | Catalogue CRUD, archive/restore, custodians | done | `7bda8f8` |
 | 4 | Loan lifecycle, timeline, overdue derivation | done | `f2be968` |
 | 5 | Loans list: search, filters, sorting, pagination | done | `3abe170` |
-| 6 | Bulk CSV import, bulk return, export | done | *pending review* |
-| 7 | Dashboard and overdue alerts | planned | — |
+| 6 | Bulk CSV import, bulk return, export | done | `3a2f24e` |
+| 7 | Dashboard and overdue alerts | done | *pending review* |
 | 8 | Frontend | planned | — |
 | 9 | Deployment and seeded demo data | planned | — |
 | 10 | Documentation pass and `SUBMISSION.md` | planned | — |
@@ -57,6 +57,7 @@ Recorded per milestone as it lands. The budget is ~12 hours total.
 | 4 | 1.5 h | ~2 h | The extra went on discovering the race tests were vacuous, and on a real timeline-ordering bug |
 | 5 | 1 h | ~1.25 h | No migration needed again; the extra went on a second vacuous test, this time for pagination ordering |
 | 6 | 1.5 h | ~1.75 h | Re-reading the brief caught that the import is of items, not loans; a third vacuous test found by mutation |
+| 7 | 1 h | ~1.25 h | No migration again; eight mutations all caught first time, and the chronology CHECK caught an incoherent test fixture |
 
 Running total is ahead of the original plan's estimate for the same point, mostly because each
 milestone has been planned before being written.
@@ -74,8 +75,10 @@ milestone has been planned before being written.
   `borrower_id` and `(status, due_on)` from milestone 1 already cover every filter and sort the
   loans list offers.
 - **Milestone 6 needed no migration either** — bulk operations write through existing services, and
-  the export is a read. Four milestones running with no schema change, which is what milestone 1
-  spending its time on the data model bought.
+  the export is a read.
+- **Milestone 7 needed no migration either.** `alert_dismissals` has been sitting there with the
+  right composite key since milestone 1. Five milestones running with no schema change, which is
+  what milestone 1 spending its time on the data model bought.
 - **The CSV import is of catalogue items, not loans.** The milestone was specified to me in
   loan-shaped terms; re-reading goal 7 settled it (Decision 15).
 
@@ -92,6 +95,24 @@ milestone has been planned before being written.
   need the smallest possible librarian-only endpoint.
 - **`GET /items/:id` returns a role-dependent shape** — custodians and loan history for librarians,
   neither for members.
+
+## Goals covered so far
+
+| Goal | Where |
+|---|---|
+| 1 Accounts and roles | milestone 2 |
+| 2 Catalogue items | milestone 3 |
+| 3 Loans | milestone 4 |
+| 4 Loan lifecycle with rules | milestone 4 |
+| 5 Custodians | milestone 3 |
+| 6 Finding loans | milestone 5 |
+| 7 Bulk operations | milestone 6 |
+| 8 Dashboard | milestone 7 |
+| 9 History you cannot rewrite | milestone 1 (constraints) + milestone 4 (timeline) |
+| 10 Overdue alerts | milestone 7 |
+
+All ten are implemented server-side. What remains is the frontend, deployment with seeded demo data,
+and the final documentation pass.
 
 ## What was cut when time ran short
 

@@ -586,6 +586,73 @@ actually happened — not only that the end state looks right.
 
 ---
 
+## 9. Milestone 7 — dashboard and overdue alerts
+
+### Prompt
+
+Abridged. The approval added a requirement that shaped the implementation:
+
+> Use ONE consistent UTC "as-of" value per dashboard/alerts request. Capture the relevant `now` / UTC
+> date once and use it consistently for: overdue calculation; returned-this-week boundary; 8-week
+> chart bucket boundaries where applicable. Do not independently calculate today's date multiple
+> times during the same request.
+
+and, on the custodian breakdown:
+
+> a loan for an item with two custodians contributes to both custodians; an item with no custodians
+> contributes to `Unassigned`; therefore custodian totals may exceed the total loan count. Document
+> this explicitly rather than trying to force the numbers to sum.
+
+### What I got
+
+Both endpoints on the first pass, and no migration — `alert_dismissals` has had the right composite
+key `(loan_id, user_id)` since milestone 1, which is the whole reason goal 10's hardest sentence
+needs no special case: "if the item is later issued again and becomes overdue on the new loan, the
+alert returns" falls out of a later issue being a **new loan row**.
+
+The single-`asOf` rule turned out to be worth stating explicitly. The dashboard shows "returned this
+week" as a headline *and* as the final bar of the eight-week chart — the same number twice. Two
+queries each asking the clock separately can straddle a Monday and disagree by one, on one screen.
+There is now a test asserting the two are equal.
+
+### Mutation results
+
+Eight deliberate breakages, all caught:
+
+```
+current week -> trailing 7 days            1 failed
+Unassigned bucket dropped (LEFT -> JOIN)   2 failed
+byCustodian -> open loans only             2 failed
+chart LEFT JOIN -> JOIN (empty weeks gone) 2 failed
+overdue lt -> lte (dashboard)              1 failed
+dismissal keyed on item, not loan          2 failed
+user_id dropped from dismissal filter      1 failed
+overdue lt -> lte (alerts)                 1 failed
+```
+
+The first time in four milestones that nothing survived. One near-miss worth recording: my fourth
+mutation initially reported "20 passed" because the anchor text I was replacing did not match, so the
+mutation never applied — I nearly recorded a pass against unmodified code as evidence. Checking the
+patch actually landed matters as much as running the suite.
+
+### What went wrong
+
+Only one thing, and it was a test fixture rather than the code. A test seeding a return from nine
+weeks ago failed with `loans_chronology_chk`: my helper hardcoded `requestedAt` to forty days ago, so
+the loan came back before it went out. The constraint written in milestone 1 was right and the
+fixture was wrong; the helper now derives the request time from the closing timestamp.
+
+That is the third time that constraint has caught something.
+
+### Lesson
+
+The design decision that paid off here was made three milestones earlier: keying dismissals on
+`(loan_id, user_id)` in milestone 1 meant goal 10's re-appearance rule required no code at all. The
+mutation that keys them on the item instead fails two tests — which is exactly how the intuitive,
+wrong implementation would have behaved.
+
+---
+
 ## Not yet written
 
-Milestones 7 onward. This file is appended to as each one lands.
+Milestone 8 onward. This file is appended to as each one lands.

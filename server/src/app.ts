@@ -1,7 +1,9 @@
 import express, { type Express } from 'express';
 import { attachSession } from './auth/middleware.js';
 import { ApiError, errorHandler } from './http/errors.js';
+import { alertsRouter } from './routes/alerts.js';
 import { authRouter } from './routes/auth.js';
+import { dashboardRouter } from './routes/dashboard.js';
 import { healthRouter } from './routes/health.js';
 import { itemsRouter } from './routes/items.js';
 import { loansRouter } from './routes/loans.js';
@@ -40,6 +42,8 @@ export function createApp(): Express {
   app.use('/api', authRouter);
   app.use('/api', itemsRouter);
   app.use('/api', loansRouter);
+  app.use('/api', dashboardRouter);
+  app.use('/api', alertsRouter);
 
   // Unknown API routes must not fall through to anything else.
   app.use('/api', (_req, _res, next) => {
