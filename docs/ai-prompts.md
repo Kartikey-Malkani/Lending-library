@@ -375,6 +375,87 @@ not from memory of having written it two sessions ago.
 
 ---
 
+## 6. Milestone 4 — the loan lifecycle
+
+### Prompt
+
+Planning first, with an unusually specific brief. The part that changed the outcome most:
+
+> CRITICAL: REQUEST + ARCHIVE CONCURRENCY. Strengthen the implementation plan here before coding.
+> A simple: SELECT item -> check archived_at -> INSERT loan is NOT sufficient. There must be a
+> transaction/locking or equivalent atomic strategy [...] What must NEVER happen is: archive commits
+> first; request subsequently commits a new Requested/Issued loan against the archived item.
+
+and, on the tests:
+
+> make the request+archive race test genuinely exercise the transaction/locking behavior rather than
+> merely running sequential operations and calling it a concurrency test.
+
+The approval also overruled two things I had proposed: requiring a note when marking a loan lost, and
+rejecting a due date in the past. Both were correctly identified as requirements I had invented — the
+brief says notes are optional ("any notes left by a librarian"), and a past due date is exactly how a
+loan legitimately becomes overdue.
+
+### What I got
+
+The lifecycle itself went in cleanly: three concurrency mechanisms, one per kind of race — the
+partial unique index for two people grabbing the same item, a conditional `UPDATE` for two people
+acting on the same loan, and an item row lock (`SELECT ... FOR UPDATE`) for a loan racing an archive.
+All 174 tests passed on the first full run.
+
+That first green run is the most misleading thing that happened in this project so far.
+
+### What went wrong
+
+**The concurrency tests were vacuous, and I only found out because I checked.**
+
+The race tests fired overlapping HTTP requests with `Promise.all` and asserted the outcome. They
+passed. Before reporting that as evidence, I removed `FOR UPDATE` from the service — deliberately
+reintroducing the exact bug the tests existed to catch — and ran them again:
+
+```
+run 1: Tests 12 passed (12)
+run 2: Tests 12 passed (12)
+run 3: Tests 12 passed (12)
+```
+
+All twelve passed against a broken implementation. The window between reading `archived_at` and
+inserting the loan is microseconds wide, and the scheduler essentially never lands inside it. Twelve
+green tests, zero information.
+
+The fix was to stop hoping for an interleaving and control it. A second connection opens a
+transaction, archives the item, and **holds the transaction open**, keeping the row lock. The API call
+is then made while the lock is held, and the test asserts the request has *not completed* — because
+with `FOR UPDATE` it is blocked, and without it, it sails past and commits a loan against an item
+that is archived a moment later. Against the mutant, three of those tests now fail with
+`expected 'completed' to be 'timeout'`. Against the real implementation they pass. That is the
+difference between a test and a decoration.
+
+**A real ordering bug, surfaced by a flake.** On a later run one lifecycle test failed that had passed
+before: the two events a direct issue writes (`requested` and `issued`) share a timestamp, so ordering
+by `(created_at, id)` with random uuids returned them in a random order. This was not a test problem —
+the API returned the timeline backwards about half the time. Fixed by tie-breaking on event type,
+which works because the `loan_event_type` enum is declared in lifecycle order and Postgres sorts enums
+by declaration order (Decision 12).
+
+**A cleanup script that was correctly refused.** While verifying live, I tried to `DELETE FROM
+loan_events` to reset an item between checks. It silently did nothing — the append-only trigger from
+milestone 1 refused it, as designed. Two of my live concurrency checks then selected the wrong loan
+and reported misleading 409s; I noticed, rebuilt those checks on a fresh item, and reran them rather
+than reporting the first numbers.
+
+### Lesson
+
+**A concurrency test that has never failed has not been tested.** The only way I know to trust one is
+to break the implementation on purpose and confirm the test notices. That took about five minutes and
+turned twelve worthless assertions into four meaningful ones.
+
+The related lesson is about the first green run: 174 passing tests felt like completion and was
+actually the moment to be most suspicious, because the hardest requirement in the milestone had a
+suite that could not tell right from wrong.
+
+---
+
 ## Not yet written
 
-Milestones 4 onward. This file is appended to as each one lands.
+Milestones 5 onward. This file is appended to as each one lands.

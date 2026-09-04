@@ -235,3 +235,96 @@ it were an implementation.
   omits the field entirely for a member rather than returning it and relying on the UI not to draw
   it. The service does not fetch custodians at all on that path, so there is nothing to leak.
 
+---
+
+## Decision 11 — Three different concurrency mechanisms, one per kind of race
+
+- **Chose:** the partial unique index for "one open loan per item", a row lock on the catalogue item
+  (`SELECT ... FOR UPDATE`) for "no new loan on an archived item", and a conditional `UPDATE` naming
+  the expected state for "one transition per loan".
+- **Rejected:** a single mechanism for all three — in particular, an application-level check of the
+  item's `archived_at` before inserting the loan.
+- **Why:** the three races are genuinely different and a single tool does not cover them.
+
+  The unique index handles two people grabbing the same free item: the second insert cannot exist,
+  whatever the interleaving. The conditional `UPDATE` handles two people acting on the same loan: the
+  second matches zero rows once the first commits, so exactly one event is written.
+
+  The archive race needed something else. `SELECT archived_at` followed by `INSERT` leaves a window
+  in which an archive can commit between the two statements, and the loan lands against an item that
+  is already out of circulation. A constraint cannot express it, because the rule spans two tables.
+  So the loan path takes the item's row lock before writing, and archiving takes the same lock via
+  its own `UPDATE`. The two serialize: either the loan commits first and the item is archived with a
+  legitimate open loan against it, or the archive commits first and the loan attempt re-reads the
+  committed row and is refused.
+
+  Returns and mark-lost deliberately take **no** item lock. Archiving stops an item going out; it
+  must never stop one coming back, so blocking a return behind an archive would be wrong as well as
+  slow.
+
+  Lock order is always item first, then loan, so two operations cannot deadlock by taking the same
+  pair in opposite orders.
+
+  **What this cost, and why it was worth finding:** the first version of the race tests fired
+  overlapping HTTP requests with `Promise.all` and asserted the outcome. They passed. Then I removed
+  `FOR UPDATE` from the service and ran them again — all twelve still passed. The window is
+  microseconds wide and the scheduler essentially never lands inside it, so those tests proved
+  nothing about the lock. The suite now also holds an uncommitted archive transaction open and
+  asserts that a concurrent request *blocks* on the row lock, which does fail without `FOR UPDATE`.
+  An outcome-only race test is close to worthless for proving a lock exists.
+
+---
+
+## Decision 12 — Timeline order breaks ties on event type, not on id
+
+- **Chose:** order a loan's timeline by `(created_at, type, id)`, relying on the `loan_event_type`
+  enum being declared in lifecycle order.
+- **Rejected:** `(created_at, id)`; and adding a monotonic sequence column now.
+- **Why:** a librarian issuing an item directly writes two events — `requested` and `issued` — in one
+  transaction at the same instant, because the loan genuinely passes through both states. With only
+  `created_at` and a random uuid to sort by, those two come back in a random order. It surfaced as a
+  test that passed once and failed on the next run, but it was never only a test problem: the API
+  returned the timeline backwards roughly half the time.
+
+### Why enum order is sufficient today
+
+Postgres sorts enum columns by declaration order, and `loan_event_type` is declared
+`requested, issued, returned, lost` — lifecycle order. So comparing `type` compares lifecycle
+position.
+
+That is a *correct* tiebreak, not just a convenient one, because a single loan can never hold two
+events of the same type. Every creation path was reviewed to confirm it:
+
+| Type | Written by | Why at most once |
+|---|---|---|
+| `requested` | loan creation (`requestLoan`, `createIssuedLoan`) | a loan is created exactly once |
+| `issued` | `createIssuedLoan` at creation, **or** the `requested → issued` transition | a loan takes one path or the other, and `issued → issued` is refused |
+| `returned` | the `issued → returned` transition | `returned → returned` is refused |
+| `lost` | the `issued → lost` transition | `lost → lost` is refused |
+
+So `type` is in fact a *total order* over one loan's events, which is stronger than a tiebreak needs
+to be. `id` stays as a final key so the `ORDER BY` is fully determined regardless.
+
+`loans-lifecycle.test.ts` asserts this directly — it drives a full lifecycle including refused
+transitions and then queries for any `(loan_id, type)` pair occurring more than once, expecting none.
+It also asserts the enum's declaration order, since that is the property the ordering depends on.
+
+### The limitation, stated plainly
+
+This holds **only while every event type is a one-per-loan lifecycle transition.**
+
+Adding an event type that can legitimately occur more than once on the same loan — a standalone
+librarian note, a renewal, a condition check at handover — would allow two events of the same type
+at the same timestamp. Enum order could not separate those, and the timeline would go back to being
+non-deterministic in exactly the way it was before this fix.
+
+### What to do at that point
+
+Add a **monotonic ordering column** on `loan_events` in a **new migration** — a `bigserial` sequence,
+or a per-loan sequence number — and order by `(loan_id, seq)`. That is unconditionally correct and
+needs none of the reasoning above.
+
+It is deliberately not added now: it would be a migration to solve a problem the current event model
+does not have, and the enum's ordering is a property chosen on purpose in milestone 1 rather than a
+coincidence being exploited. The guard against forgetting is the test, which fails the day the
+assumption stops being true.

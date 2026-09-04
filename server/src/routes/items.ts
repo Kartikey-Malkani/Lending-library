@@ -13,6 +13,7 @@ import {
   toItemView,
   updateItem,
 } from '../catalogue/service.js';
+import { listLoansForItem } from '../loans/service.js';
 import { asyncHandler } from '../http/errors.js';
 import {
   boundedText,
@@ -105,14 +106,16 @@ itemsRouter.get(
     const item = await getItemOrThrow(id);
     const user = currentUser(req);
 
-    // Custodian data is librarian-only, so for a member it is not fetched at
-    // all rather than fetched and stripped.
+    // Custodian assignments and the loan history are librarian-only, so for a
+    // member neither is fetched at all rather than fetched and stripped. The
+    // loan history would otherwise reveal who else has borrowed the item.
     if (user.role !== 'librarian') {
       res.json({ item: toItemView(item) });
       return;
     }
 
-    res.json({ item: toItemView(item), custodians: await listCustodians(id) });
+    const [custodians, loans] = await Promise.all([listCustodians(id), listLoansForItem(id)]);
+    res.json({ item: toItemView(item), custodians, loans });
   }),
 );
 

@@ -327,19 +327,13 @@ describe('archiving does not disturb anything else', () => {
   });
 
   /**
-   * Not testable in this milestone.
-   *
-   * "An archived item cannot receive a new loan" is enforced by the loan
-   * service, which does not exist yet, and no loan endpoint is being written
-   * here just to have something to assert against. What this milestone
-   * guarantees is that the state the rule depends on is exposed correctly —
-   * `isArchived` and `archivedAt` on the item payload, asserted above.
-   *
-   * Milestone 6 must add: request and issue against an archived item are both
-   * rejected with 409, while an already-open loan on that item can still be
-   * returned or marked lost.
+   * The rule this milestone could only prepare for — "an archived item cannot
+   * receive a new loan" — is now enforced by the loan service and tested where
+   * it lives: see `loans-lifecycle.test.ts` ("archived items") for the
+   * request/issue rejections and the return/lost exceptions, and
+   * `loans-concurrency.test.ts` ("a loan racing an archive") for the case where
+   * the two operations overlap.
    */
-  it.todo('milestone 6: requesting or issuing an archived item is rejected with 409');
 });
 
 describe('server-side search, filtering, sorting and pagination', () => {
