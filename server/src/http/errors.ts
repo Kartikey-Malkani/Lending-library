@@ -47,6 +47,34 @@ export class ApiError extends Error {
   static badRequest(message: string, details?: unknown): ApiError {
     return new ApiError(400, 'bad_request', message, details);
   }
+
+  /**
+   * A request that is well-formed but conflicts with the current state of the
+   * system: an illegal transition, a duplicate identifier, an item that already
+   * has an open loan. The brief requires these rejections to explain
+   * themselves, so `message` is always written for a person.
+   */
+  static conflict(code: string, message: string, details?: unknown): ApiError {
+    return new ApiError(409, code, message, details);
+  }
+}
+
+/** Prisma's unique-constraint violation. */
+const PRISMA_UNIQUE_VIOLATION = 'P2002';
+
+/**
+ * Recognises a unique-constraint violation on a specific column.
+ *
+ * Prisma reports these as P2002 with the offending columns in `meta.target`.
+ * Callers use this to turn a database error into a readable 409 rather than
+ * letting it surface as an unexplained 500.
+ */
+export function isUniqueViolationOn(error: unknown, column: string): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const candidate = error as { code?: unknown; meta?: { target?: unknown } };
+  if (candidate.code !== PRISMA_UNIQUE_VIOLATION) return false;
+  const target = candidate.meta?.target;
+  return Array.isArray(target) && target.includes(column);
 }
 
 /**

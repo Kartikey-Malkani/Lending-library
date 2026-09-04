@@ -160,3 +160,78 @@ it were an implementation.
   This is the smallest decision here and the least interesting, but it is the reason a dependency
   that appears in the git history is absent from the final `package.json`, and that is worth being
   able to explain.
+
+---
+
+## Decision 8 — Archive and restore are conflicting state transitions, not idempotent toggles
+
+- **Chose:** archiving an already-archived item returns `409 already_archived`, and restoring an
+  active item returns `409 not_archived`. Both are conditional updates
+  (`UPDATE ... WHERE archived_at IS NULL`), not read-then-write.
+- **Rejected:** idempotent archive/restore, where repeating the call quietly succeeds.
+- **Why:** the system already promises that an illegal state change explains itself rather than
+  being silently absorbed — that is goal 4's rule for loans. Archiving is a state change on the item,
+  and having two different contracts for the same shape of operation would be arbitrary.
+
+  It also matters in the situation the brief opens with: several people acting on stale information.
+  If one librarian archives an item while another's screen still shows it active, the second click
+  should say "that already happened", not report success and leave them believing they did it.
+
+  The conditional update is what makes this safe under concurrency. A read-then-write version lets
+  two simultaneous archives both pass the "is it active?" check before either writes, and both
+  report success; here the `WHERE` clause does the checking, so exactly one update matches a row.
+
+  The cost is real: a retried request whose response was lost gets a false error. Archive is a
+  deliberate, low-frequency action, so I took that trade — but it is the entry here I would most
+  readily reverse if it turned out to annoy in practice.
+
+---
+
+## Decision 9 — Custodians are replaced as a set, and that operation is idempotent
+
+- **Chose:** `PUT /api/items/:id/custodians` with the complete list of librarian ids, replacing the
+  set in one transaction. Sending the same set twice is a no-op; duplicate ids within the request are
+  deduplicated.
+- **Rejected:** granular `POST` and `DELETE /custodians/:librarianId` endpoints.
+- **Why:** the UI for this is a multi-select. Granular endpoints would force the client to diff its
+  own state into several calls and handle partial failure halfway through; one atomic call cannot
+  half-apply.
+
+  Note the deliberate asymmetry with Decision 8. Custodian assignment is **set membership** — "ensure
+  this librarian is a custodian" carries no new information when repeated, so idempotence is the
+  honest contract. Archiving is a **lifecycle transition**, where a repeat means the caller believed
+  something that is no longer true. Same system, opposite contracts, for a reason.
+
+  **The trade I am accepting:** set replacement is last-write-wins. Two librarians editing custodians
+  at the same time means one silently loses the other's change. Granular endpoints would not have
+  that problem. For a handful of librarians on a small catalogue this is acceptable; at a larger
+  scale it would not be.
+
+  One consequence shaped the implementation more than the endpoint shape did: **every id is validated
+  before anything is written.** The natural implementation is delete-then-insert inside a
+  transaction and trust the rollback, which looks correct but only holds if the failure happens
+  inside the transaction. Validating first means a request naming even one member id leaves the
+  existing set completely untouched — asserted directly in `custodians.test.ts` rather than inferred
+  from rollback semantics.
+
+---
+
+## Decision 10 — Custodianship is responsibility, not permission
+
+- **Chose:** any librarian may edit, archive and manage custodians on any catalogue item, whether or
+  not they are one of its custodians. Custodian data is not shown to members at all.
+- **Rejected:** treating custodianship as an authorization scope, so that only an item's custodians
+  could modify it.
+- **Why:** goal 5 describes custodians as "responsible for its condition and location" and requires
+  each librarian to be able to see their own list. It says nothing about restricting who may edit
+  what, and inventing that restriction would add a permission rule the brief never asked for — one
+  that would immediately get in the way when a custodian is on holiday.
+
+  Keeping it out of authorization also keeps the capability matrix honest: `custodian:manage` is a
+  librarian capability, full stop, with no per-row exception hiding behind it.
+
+  The member side is the opposite call. Members can browse the catalogue because goal 3 requires them
+  to request items, but custodian assignments are internal operational data, so `GET /items/:id`
+  omits the field entirely for a member rather than returning it and relying on the UI not to draw
+  it. The service does not fetch custodians at all on that path, so there is nothing to leak.
+

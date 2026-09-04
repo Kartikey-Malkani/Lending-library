@@ -296,6 +296,85 @@ optional.
 
 ---
 
+## 5. Milestone 3 — catalogue CRUD, archive/restore and custodians
+
+### Prompt
+
+Planning first, again — the pattern that has worked best so far:
+
+> Proceed to Milestone 3 planning only. Scope: catalogue CRUD; archive/restore; many-to-many
+> custodians; corresponding server-side authorization and integration tests. Do NOT implement
+> anything yet. First inspect the existing code/schema/auth architecture and the assignment
+> requirements, then produce a concrete implementation plan and STOP for my review. [...] Think
+> carefully about whether archive/restore should be idempotent or return a conflict when already
+> archived/restored, and explain the choice. [...] Do not over-engineer search. No trigram/full-text
+> infrastructure unless there is an actual requirement.
+
+Then an approval that pinned down the decisions, with one addition worth quoting because it shaped a
+test:
+
+> IMPORTANT TEST: If the submitted librarianIds contains an invalid/non-librarian ID, the API must
+> return 400 and the item's existing custodian set must remain completely unchanged. Prove this with
+> an integration test.
+
+### What I got
+
+The most useful outcome of the planning step was discovering there was **nothing to build in the
+database**. Inspecting the schema before proposing changes showed Milestone 1 had already created
+everything this milestone needed: `archived_at` as a nullable timestamp, the composite primary key on
+`item_custodians` that makes a duplicate link impossible, `ON DELETE CASCADE` from items to the join
+table, and indexes on `archived_at` and `category`. So Milestone 3 ships **no migration at all**,
+which is the right answer and one I would have missed by planning less carefully.
+
+Two design questions were worth the time:
+
+- **Archive/restore returns 409 when the item is already in that state**, rather than being
+  idempotent. The system already promises that an illegal state transition explains itself; archive
+  is a state transition, and in a tool where several librarians act on the same catalogue, silently
+  agreeing with a click made against stale state is worse than a clear conflict. Implemented as a
+  conditional `UPDATE ... WHERE archived_at IS NULL` so two concurrent archives cannot both win.
+- **Custodians are replaced as a set, and that is idempotent** — the opposite contract. The
+  distinction is that set membership ("ensure X is a custodian") carries no information when
+  repeated, while a lifecycle transition does. Both are in `decisions.md` with that reasoning.
+
+### What went wrong
+
+Less than in previous milestones, and nothing that reached the test run.
+
+The one thing I wrote badly and rewrote before running anything: the first version of
+`replaceCustodians` handled "empty set" by passing a sentinel UUID into a `notIn` clause, so that
+`deleteMany` would match everything. It worked, and it was the kind of clever-looking line that a
+reader has to stop and decode. Replaced with an explicit branch — delete all when the set is empty,
+delete the complement otherwise.
+
+The genuinely valuable part was the test the approval insisted on. Validating custodian ids *before*
+touching the existing set is easy to get wrong in a way no ordinary test catches: the natural
+implementation is delete-then-insert inside a transaction, which looks correct because the
+transaction rolls back — but only if the failure happens inside it. Validating first, outside the
+write, and asserting afterwards that the original two custodians are still there, is a much stronger
+guarantee than trusting rollback semantics.
+
+Final state: 106 tests passing plus one explicit `todo`, both workspaces typechecking, and the
+catalogue and custodian endpoints verified live against real Postgres.
+
+### The test I deliberately did not write
+
+"An archived item cannot receive a new loan" is a Milestone 6 rule. Writing a loan endpoint now, just
+so this milestone had something to assert against, would have manufactured coverage for functionality
+that does not exist. Instead the test file carries an `it.todo` naming the exact Milestone 6 test,
+and this milestone proves the part it actually owns: `isArchived` and `archivedAt` are exposed
+correctly, and archiving leaves existing loans byte-for-byte untouched — which *is* testable now, by
+seeding loans through Prisma rather than through an endpoint that has not been built.
+
+### Lesson
+
+Inspecting before planning paid for itself twice: once by avoiding a migration that would have been
+pure churn, and once by finding that the composite primary key I needed already existed. The habit
+worth keeping is treating "what does the schema already do?" as a question to answer with a query,
+not from memory of having written it two sessions ago.
+
+---
+
 ## Not yet written
 
-Milestones 3 onward. This file is appended to as each one lands.
+Milestones 4 onward. This file is appended to as each one lands.

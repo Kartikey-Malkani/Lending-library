@@ -3,6 +3,7 @@ import { attachSession } from './auth/middleware.js';
 import { ApiError, errorHandler } from './http/errors.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
+import { itemsRouter } from './routes/items.js';
 
 /**
  * The middleware every request passes through, in order.
@@ -32,6 +33,7 @@ export function createApp(): Express {
 
   app.use('/api', healthRouter);
   app.use('/api', authRouter);
+  app.use('/api', itemsRouter);
 
   // Unknown API routes must not fall through to anything else.
   app.use('/api', (_req, _res, next) => {
