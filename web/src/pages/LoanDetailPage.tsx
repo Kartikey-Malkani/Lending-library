@@ -36,7 +36,11 @@ export function LoanDetailPage() {
   const { loan, events } = query.data;
   const borrower = people.data?.rows.find((row) => row.id === loan.borrowerId);
   const borrowerLabel =
-    loan.borrowerId === user?.id ? 'You' : (borrower ? `${borrower.name} (${borrower.email})` : loan.borrowerId);
+    loan.borrowerId === user?.id
+      ? 'You'
+      : borrower
+        ? `${borrower.name} (${borrower.email})`
+        : loan.borrowerId;
 
   return (
     <section>

@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ItemDetailPage } from '../src/pages/ItemDetailPage.js';
-import { emptyPage, renderApp, signedInAs, stubFetch, type Routes as StubRoutes } from './harness.js';
+import {
+  emptyPage,
+  renderApp,
+  signedInAs,
+  stubFetch,
+  type Routes as StubRoutes,
+} from './harness.js';
 
 afterEach(() => vi.unstubAllGlobals());
 

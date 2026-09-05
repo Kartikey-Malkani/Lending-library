@@ -145,9 +145,7 @@ describe('bulk return', () => {
 
     renderApp(<LoansPage />, { route: '/loans' });
 
-    await user.click(
-      await screen.findByLabelText('Select loan of Canon EOS R6 to Sam Okonkwo'),
-    );
+    await user.click(await screen.findByLabelText('Select loan of Canon EOS R6 to Sam Okonkwo'));
     await user.click(screen.getByLabelText('Select loan of Tripod to Dana Feldman'));
     return { user, calls };
   }

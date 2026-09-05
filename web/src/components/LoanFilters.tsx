@@ -111,7 +111,11 @@ export function LoanFilters({
 
       <div className="field">
         <label htmlFor="loan-sort">Sort by</label>
-        <select id="loan-sort" value={params.get('sort') ?? 'requestedAt'} onChange={handle('sort')}>
+        <select
+          id="loan-sort"
+          value={params.get('sort') ?? 'requestedAt'}
+          onChange={handle('sort')}
+        >
           <option value="requestedAt">Date requested</option>
           <option value="dueOn">Due date</option>
           <option value="status">Status</option>
