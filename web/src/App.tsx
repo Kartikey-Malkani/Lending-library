@@ -1,7 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from './auth/RequireAuth.js';
 import { Layout } from './components/Layout.js';
+import { AlertsPage } from './pages/AlertsPage.js';
 import { CataloguePage } from './pages/CataloguePage.js';
+import { DashboardPage } from './pages/DashboardPage.js';
 import { ImportPage } from './pages/ImportPage.js';
 import { ItemDetailPage } from './pages/ItemDetailPage.js';
 import { LoanDetailPage } from './pages/LoanDetailPage.js';
@@ -15,8 +17,7 @@ import { MyItemsPage } from './pages/MyItemsPage.js';
  * `RequireAuth` decides what to show, not what is permitted. Every page behind
  * it calls endpoints the server guards by capability, so a member who types
  * `/my-items` or `/import` into the address bar gets a 403 from the API
- * regardless of what this file says. The dashboard and alerts arrive in a later
- * milestone.
+ * regardless of what this file says.
  */
 export function App() {
   return (
@@ -31,6 +32,22 @@ export function App() {
         }
       >
         <Route index element={<Navigate to="/catalogue" replace />} />
+        <Route
+          path="/dashboard"
+          element={
+            <RequireAuth role="librarian">
+              <DashboardPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/alerts"
+          element={
+            <RequireAuth role="librarian">
+              <AlertsPage />
+            </RequireAuth>
+          }
+        />
         <Route path="/catalogue" element={<CataloguePage />} />
         <Route path="/catalogue/:id" element={<ItemDetailPage />} />
         {/* Both roles: the server scopes a member's list to their own loans. */}

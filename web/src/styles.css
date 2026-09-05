@@ -181,3 +181,35 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .timeline__note { margin: .25rem 0 0; }
 
 .table td input[type='checkbox'] { width: 1.05rem; height: 1.05rem; }
+
+/* --- dashboard --------------------------------------------------------- */
+
+.cards {
+  display: grid; gap: .85rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+.card {
+  padding: .9rem 1rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.card__value { margin: 0; font-size: 1.9rem; font-weight: 700; line-height: 1.1; }
+.card__label { margin: .3rem 0 0; font-size: .9rem; }
+.card__note { margin: .15rem 0 0; font-size: .8rem; color: var(--ink-soft); }
+
+/*
+ * Bars are drawn in a table cell, so the figure beside them is the real data
+ * and the bar is decoration. Nothing is lost if styles do not load.
+ */
+.chart__cell { width: 45%; }
+.chart__bar {
+  display: block; height: .7rem; min-width: 2px;
+  background: var(--accent); border-radius: 2px;
+}
+
+/* The alert badge in the navigation. The number comes from the server. */
+.badge {
+  display: inline-block; margin-left: .35rem;
+  min-width: 1.35rem; padding: 0 .35rem;
+  border-radius: 999px; background: var(--danger); color: #fff;
+  font-size: .75rem; font-weight: 700; text-align: center;
+}

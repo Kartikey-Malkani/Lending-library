@@ -103,3 +103,55 @@ export type BulkReturnResult =
   | { loanId: string; ok: false; code: string; message: string };
 
 export type BulkReturnReport = { returned: number; failed: number; results: BulkReturnResult[] };
+
+/**
+ * The dashboard, exactly as `GET /api/dashboard` returns it.
+ *
+ * Every number here is a database aggregate computed against one `asOf`
+ * instant. Nothing in this shape is derived a second time in the browser.
+ */
+export type Dashboard = {
+  /** The instant the server computed every number below against. */
+  asOf: string;
+  headline: {
+    itemsCurrentlyOut: number;
+    itemsOverdue: number;
+    loansReturnedThisWeek: number;
+    /** Active items. Archived ones are reported separately, not folded in. */
+    totalItems: number;
+    archivedItems: number;
+  };
+  /** The four real lifecycle statuses. Overdue is not one of them. */
+  byStatus: { status: LoanStatus; count: number }[];
+  /**
+   * Loans per custodian, including an `Unassigned` bucket whose `custodianId`
+   * is null. These counts deliberately do not sum to the number of loans: an
+   * item may have several custodians and a loan counts once for each, because
+   * each is responsible for it.
+   */
+  byCustodian: { custodianId: string | null; name: string; count: number }[];
+  /** Exactly eight buckets, oldest first, the current ISO week last. */
+  returnsPerWeek: { weekStart: string; count: number }[];
+};
+
+/** One overdue loan this librarian has not dismissed. */
+export type Alert = {
+  loanId: string;
+  dueOn: string;
+  daysOverdue: number;
+  item: { id: string; code: string; title: string; isArchived: boolean };
+  borrower: { id: string; name: string; email: string };
+};
+
+/**
+ * `count` is every undismissed overdue loan, and `rows` is one page of them.
+ * The navigation badge reads `count`; using `rows.length` would make the badge
+ * say 20 on a library with 200 overdue items.
+ */
+export type AlertsPage = {
+  rows: Alert[];
+  count: number;
+  total: number;
+  page: number;
+  pageSize: number;
+};
