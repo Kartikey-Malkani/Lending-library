@@ -16,3 +16,9 @@ venv/
 coverage/
 *.tsbuildinfo
 .vite/
+
+# Local screenshots. Kept out of the repository because they can contain
+# connection strings and dashboard credentials in plain sight.
+Screenshot*.png
+*.screenshot.png
+

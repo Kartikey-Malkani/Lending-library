@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // `src` rather than `.`, so the emitted tree is dist/index.js rather than
+    // dist/src/index.js — which is what `npm start` has always pointed at.
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  // Production ships the server and nothing else. The default tsconfig also
+  // covers prisma/ and test/ for typechecking; compiling those would put the
+  // test suite and the seed script into the deployed image.
+  "include": ["src/**/*.ts"]
+}
