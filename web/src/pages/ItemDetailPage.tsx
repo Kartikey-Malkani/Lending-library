@@ -1,17 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import {
-  archiveItem,
-  getItem,
-  listLibrarians,
-  restoreItem,
-  setCustodians,
-  updateItem,
-} from '../api/catalogue.js';
+import { archiveItem, getItem, restoreItem, setCustodians, updateItem } from '../api/catalogue.js';
+import { createIssuedLoan, requestLoan } from '../api/loans.js';
+import { listLibrarians } from '../api/users.js';
 import type { ItemLoan } from '../api/types.js';
 import { useAuth } from '../auth/AuthProvider.js';
+import { BorrowerPicker } from '../components/BorrowerPicker.js';
 import { Empty, ErrorState, Loading } from '../components/DataState.js';
+import { isoDate, StatusTag } from '../components/StatusTag.js';
 
 export function ItemDetailPage() {
   const { id = '' } = useParams();
@@ -54,6 +51,8 @@ export function ItemDetailPage() {
           </>
         )}
       </dl>
+
+      <LoanActions itemId={id} isLibrarian={isLibrarian} />
 
       {isLibrarian && <EditItem id={id} initial={item} />}
       {isLibrarian && <ArchiveControls id={id} isArchived={item.isArchived} />}
@@ -252,23 +251,28 @@ function LoanHistory({ loans }: { loans: ItemLoan[] }) {
               <th scope="col">Requested</th>
               <th scope="col">Due</th>
               <th scope="col">Closed</th>
+              <th scope="col">
+                <span className="visually-hidden">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
             {loans.map((loan) => (
               <tr key={loan.id}>
                 <td>
-                  <span className="tag">{loan.status}</span>
-                  {loan.isOverdue && <span className="tag tag--warn"> overdue</span>}
+                  <StatusTag status={loan.status} isOverdue={loan.isOverdue} />
                 </td>
-                <td>{new Date(loan.requestedAt).toLocaleDateString()}</td>
-                <td>{loan.dueOn ? new Date(loan.dueOn).toLocaleDateString() : '—'}</td>
+                <td>{isoDate(loan.requestedAt)}</td>
+                <td>{isoDate(loan.dueOn)}</td>
                 <td>
                   {loan.returnedAt
-                    ? `returned ${new Date(loan.returnedAt).toLocaleDateString()}`
+                    ? `returned ${isoDate(loan.returnedAt)}`
                     : loan.lostAt
-                      ? `lost ${new Date(loan.lostAt).toLocaleDateString()}`
+                      ? `lost ${isoDate(loan.lostAt)}`
                       : '—'}
+                </td>
+                <td>
+                  <Link to={`/loans/${loan.id}`}>Open</Link>
                 </td>
               </tr>
             ))}
@@ -276,5 +280,140 @@ function LoanHistory({ loans }: { loans: ItemLoan[] }) {
         </table>
       )}
     </div>
+  );
+}
+
+/**
+ * Borrowing this item.
+ *
+ * Two genuinely different actions, kept apart because the endpoints behind them
+ * are different:
+ *
+ *   - Requesting is for yourself. `POST /loans/request` has no borrower field at
+ *     all, so the borrower is the session user by construction. There is nothing
+ *     for the browser to set and nothing for a member to tamper with.
+ *   - Direct issue is acting on someone else's behalf, which is a librarian
+ *     capability (`loan:create-issued`). It goes to `POST /loans` with a chosen
+ *     borrower and a due date.
+ *
+ * Whether the item is free is not checked here. A partial unique index in the
+ * database permits one open loan per item, so the honest answer comes from
+ * trying — and a pre-check in React would be stale the moment another librarian
+ * commits.
+ */
+function LoanActions({ itemId, isLibrarian }: { itemId: string; isLibrarian: boolean }) {
+  return (
+    <div className="panel">
+      <h2>Loans</h2>
+      <RequestForMyself itemId={itemId} />
+      {isLibrarian && <DirectIssue itemId={itemId} />}
+    </div>
+  );
+}
+
+function RequestForMyself({ itemId }: { itemId: string }) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+
+  const request = useMutation({
+    mutationFn: () => requestLoan(itemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['item', itemId] });
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    },
+  });
+
+  return (
+    <div className="form form--inline">
+      <p className="hint">
+        Requesting puts this item aside for <strong>{user?.name}</strong> — you. A librarian issues
+        it when you collect it.
+      </p>
+      <button
+        type="button"
+        className="primary"
+        onClick={() => request.mutate()}
+        disabled={request.isPending}
+      >
+        {request.isPending ? 'Requesting…' : 'Request this item'}
+      </button>
+
+      {request.isSuccess && (
+        <p className="notice" role="status">
+          Requested. <Link to={`/loans/${request.data.loan.id}`}>View the loan</Link>.
+        </p>
+      )}
+      {/*
+        "This item already has an open loan against it." and "This item is
+        archived and cannot be loaned out." both arrive here as 409s, worded by
+        the server.
+      */}
+      {request.isError && <ErrorState error={request.error} title="Could not request this item" />}
+    </div>
+  );
+}
+
+function DirectIssue({ itemId }: { itemId: string }) {
+  const queryClient = useQueryClient();
+  const [borrowerId, setBorrowerId] = useState('');
+  const [dueOn, setDueOn] = useState('');
+  const [note, setNote] = useState('');
+
+  const issue = useMutation({
+    mutationFn: () =>
+      createIssuedLoan({
+        itemId,
+        borrowerId,
+        dueOn,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['item', itemId] });
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
+      setNote('');
+    },
+  });
+
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    issue.mutate();
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="form form--inline">
+      <h2>Issue directly to someone</h2>
+      <p className="hint">
+        For handing an item over at the desk, with no request beforehand. The loan is created
+        already issued and its history records both steps.
+      </p>
+
+      <BorrowerPicker value={borrowerId} onChange={setBorrowerId} id="issue-borrower" />
+
+      <div className="field">
+        <label htmlFor="direct-due">Due date</label>
+        <input
+          id="direct-due"
+          type="date"
+          required
+          value={dueOn}
+          onChange={(e) => setDueOn(e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="direct-note">Note (optional)</label>
+        <input id="direct-note" value={note} onChange={(e) => setNote(e.target.value)} />
+      </div>
+
+      <button type="submit" className="primary" disabled={issue.isPending}>
+        {issue.isPending ? 'Issuing…' : 'Issue now'}
+      </button>
+
+      {issue.isSuccess && (
+        <p className="notice" role="status">
+          Issued. <Link to={`/loans/${issue.data.loan.id}`}>View the loan</Link>.
+        </p>
+      )}
+      {issue.isError && <ErrorState error={issue.error} title="Could not issue this item" />}
+    </form>
   );
 }

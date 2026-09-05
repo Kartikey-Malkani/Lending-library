@@ -1,5 +1,5 @@
 import { apiRequest, type Paginated } from './client.js';
-import type { Custodian, Item, ItemDetail, User } from './types.js';
+import type { Custodian, ImportReport, Item, ItemDetail } from './types.js';
 
 /**
  * Catalogue calls.
@@ -45,6 +45,16 @@ export function setCustodians(id: string, librarianIds: string[]): Promise<{ cus
   return apiRequest(`/items/${id}/custodians`, { method: 'PUT', body: { librarianIds } });
 }
 
-export function listLibrarians(): Promise<Paginated<User>> {
-  return apiRequest('/users?role=librarian&pageSize=100');
+/**
+ * Bulk import of catalogue items.
+ *
+ * The file is sent as a raw `text/csv` body — the same bytes the user chose,
+ * not a re-serialised version of a parsed table. The response is a report, so a
+ * mixed file resolves successfully and names each failed row.
+ */
+export function importItems(csv: string): Promise<ImportReport> {
+  return apiRequest('/items/import', {
+    method: 'POST',
+    rawBody: { contentType: 'text/csv', content: csv },
+  });
 }

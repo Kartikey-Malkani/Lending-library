@@ -153,3 +153,31 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .login { max-width: 24rem; margin: 4rem auto; padding: 1.75rem; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
 .login h1 { margin-bottom: 1.25rem; }
+
+/* --- loans ------------------------------------------------------------- */
+
+/*
+ * The CSV export is an anchor, not a button, because it is a real navigation to
+ * a real file. Styled to match the buttons beside it so the difference in
+ * markup is not a difference in the interface.
+ */
+.button-link {
+  display: inline-block;
+  padding: .45rem .9rem;
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  background: var(--accent); color: #fff; text-decoration: none;
+}
+.button-link:hover { filter: brightness(1.08); }
+
+.page-head .button-link { margin-left: auto; }
+
+/* The immutable timeline. Read-only by design; there is nothing to click. */
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline__item {
+  display: flex; gap: .75rem; align-items: baseline;
+  padding: .6rem 0; border-bottom: 1px solid var(--line);
+}
+.timeline__item:last-child { border-bottom: 0; }
+.timeline__note { margin: .25rem 0 0; }
+
+.table td input[type='checkbox'] { width: 1.05rem; height: 1.05rem; }

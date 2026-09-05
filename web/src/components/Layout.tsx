@@ -37,7 +37,9 @@ export function Layout() {
 
         <nav className="app__nav" aria-label="Main">
           <NavLink to="/catalogue">Catalogue</NavLink>
+          <NavLink to="/loans">Loans</NavLink>
           {isLibrarian && <NavLink to="/my-items">My items</NavLink>}
+          {isLibrarian && <NavLink to="/import">Import</NavLink>}
         </nav>
 
         <div className="app__user">
