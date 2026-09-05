@@ -19,6 +19,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:migrate": "npm run db:migrate --workspace=server",
+    "db:migrate:deploy": "npm run db:migrate:deploy --workspace=server",
     "db:seed": "npm run db:seed --workspace=server",
     "db:studio": "npm run db:studio --workspace=server",
     "test": "npm run test --workspace=server",
