@@ -132,6 +132,7 @@ describe('the capability matrix', () => {
     const librarianOnly = [
       'catalogue:write',
       'catalogue:archive',
+      'user:list',
       'custodian:manage',
       'custodian:read-own',
       'loan:create-issued',

@@ -10,6 +10,7 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { healthRouter } from './routes/health.js';
 import { itemsRouter } from './routes/items.js';
 import { loansRouter } from './routes/loans.js';
+import { usersRouter } from './routes/users.js';
 
 /**
  * The middleware every request passes through, in order.
@@ -47,6 +48,7 @@ export function createApp(): Express {
   app.use('/api', loansRouter);
   app.use('/api', dashboardRouter);
   app.use('/api', alertsRouter);
+  app.use('/api', usersRouter);
 
   // Unknown API routes must not fall through to the SPA below: a mistyped
   // endpoint should be a JSON 404, not an HTML page.

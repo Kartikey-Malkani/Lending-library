@@ -30,6 +30,14 @@ export const CAPABILITIES = {
   'catalogue:write': ['librarian'],
   'catalogue:archive': ['librarian'],
 
+  // --- People (milestone 9) ---
+  /**
+   * Listing users, so a librarian can pick a custodian or a borrower by name
+   * rather than by pasting a uuid. Librarian-only: it is a directory of every
+   * account, which is not a member's business.
+   */
+  'user:list': ['librarian'],
+
   // --- Custodians (milestone 5) ---
   'custodian:manage': ['librarian'],
   /** "Every librarian can see one list of every item they are a custodian for." */
