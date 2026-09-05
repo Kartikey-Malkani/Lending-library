@@ -178,7 +178,7 @@ See `docs/decisions.md` Decision 26.
 (which found five vacuous tests), live browser verification, and the documentation pass.
 
 The commit history shows two working sessions on consecutive days — 2026-09-04 and 2026-09-05. I have
-not backdated or squashed anything to make that look like a week of steady work. 16 incremental
+not backdated or squashed anything to make that look like a week of steady work. 18 incremental
 commits, roughly one per milestone, never squashed, all on `main`.
 
 ## Known limitations
@@ -188,7 +188,8 @@ commits, roughly one per milestone, never squashed, all on `main`.
   blocks its item. The first thing I would add.
 - **No debounce** on search inputs — one request per keystroke.
 - **Pickers load the first 100** users or items and say so when there are more. The borrower picker
-  searches server-side; the loans-list item and borrower filters do not.
+  itself searches server-side; the underlying loans list still sends `itemId` and `borrowerId` to
+  the server for filtering — only the dropdown's own contents are capped.
 - **Headless Chromium only** for live verification.
 - **Two Vitest majors** in one repository (server 2.x, web 3.x) — Vitest 2 bundles Vite 5, which
   conflicts with the web workspace's Vite 6 types.

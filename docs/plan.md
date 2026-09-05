@@ -117,8 +117,9 @@ says and I have not adjusted it to look more like a week of steady work.
 - **No debounce on search inputs.** One request per keystroke. Fine at demo scale, wrong with real
   traffic.
 - **Pickers load the first 100 users or items** and say so when there are more, rather than paging or
-  type-ahead. The borrower picker searches server-side; the loans-list item and borrower filters do
-  not.
+  type-ahead. The borrower picker itself searches server-side; the underlying loans list still sends
+  `itemId` and `borrowerId` to the server for filtering — only the dropdown's own contents are
+  capped.
 - **Verification was headless Chromium only.** No other browser, and no mobile device, was tested.
   No cross-browser or responsive claim is made anywhere in this repository.
 - **Two Vitest majors in one repository** — the server on 2.x, the web workspace on 3.x. Vitest 2
