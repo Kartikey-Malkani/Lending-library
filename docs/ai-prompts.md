@@ -653,6 +653,246 @@ wrong implementation would have behaved.
 
 ---
 
-## Not yet written
+## 9. Milestone 8 — making it deployable, before writing the frontend
 
-Milestone 8 onward. This file is appended to as each one lands.
+### Prompt
+
+> "Now prepare a plan for the REMAINING work only" — followed by an approved plan that put deployment
+> **first**, ahead of the frontend, on the grounds that it was the highest-risk unknown left.
+
+### What I got
+
+An inspection-first plan rather than an implementation. Asked to survey the repository before
+proposing anything, the model found four things I had not been tracking:
+
+- `npm start` pointed at `dist/index.js`, but `tsconfig.json` had `rootDir: "."`, so `tsc` would emit
+  `dist/src/index.js`. **The production path had never once been run.**
+- The same `include` would have compiled the test suite into the deployed image.
+- `docs/decisions.md` and `.env.example` both described a single process serving the API and the SPA
+  — and `app.ts` served only `/api`. The deployment architecture was documented but not built.
+- `docs/architecture.md` was still the 8-line scaffold stub.
+
+### What went wrong
+
+Four separate deployment failures, none of which a plan could have predicted:
+
+1. Render reported "render.yaml not found on main" — it was written but never committed.
+2. `npm error Missing script: db:migrate:deploy` — `render.yaml` called it at the repository root
+   while only the server workspace defined it.
+3. My own `render.yaml` specified `region: frankfurt` while the Neon database was in Singapore. Every
+   query would have crossed continents. I caught this by re-reading my own file, not from a failure.
+4. Three screenshots were about to be committed to a public repository, **one of them showing a
+   plaintext database password**. Added to `.gitignore`; confirmed absent from the remote.
+
+### Lesson
+
+Putting deployment before the frontend was the single best sequencing decision in the project. Every
+one of those four failures would still have happened at the end, with the whole frontend already
+written and no time left to absorb them.
+
+The password screenshot is the one that matters most, and it had nothing to do with AI: it was a
+routine `git add` away from being permanent in a public repository. Reviewing what is about to be
+committed is not a formality.
+
+---
+
+## 10. Milestone 10 — loans and bulk operations, and two vacuous frontend tests
+
+### Prompt
+
+> "Proceed to M10 — loans and bulk operations" with sixteen numbered constraints, including: *"Do not
+> recreate loan business rules in React"*, *"don't pre-check a rule in the frontend and then suppress
+> the server response"*, *"do not fetch the entire dataset and generate a different CSV in the
+> browser"*, and *"run mutation tests where practical"*.
+
+### What I got
+
+Working screens on the first pass. The constraints were specific enough that the generated code
+followed them: filters written to the URL, the query key being `params.toString()`, the export as a
+plain anchor rather than a fetch-and-rebuild.
+
+### What was wrong
+
+**Two mutation survivors, both real gaps in my tests, not the implementation.** I deliberately broke
+the code fifteen ways and ran the suite:
+
+- Replacing the export URL with a `data:` URI — meaning the browser would build its own CSV instead of
+  downloading the server's — **all 20 tests still passed.** Nothing asserted where the export link
+  pointed.
+- Making the borrower picker fetch everyone and filter locally instead of searching server-side —
+  also passed.
+
+Both are exactly the behaviours the prompt asked me to guarantee, and my tests would have let either
+ship. I added assertions until both failed, and the final sweep was 15 mutants, 15 caught.
+
+**A real bug the work uncovered.** The API sends `details` as a `{field, message}` array for
+validation failures but as a plain object — `{currentStatus, attempted}` — for a conflict. The error
+renderer assumed an array, so `api.details.length > 0` evaluated `undefined > 0` and silently dropped
+the 409's context. No crash, no error, just missing information on exactly the screen where the brief
+requires the server to explain itself.
+
+**Also worth recording: `jsdom` does not implement `Blob.text()`.** The import page used it, so the
+upload path could not be tested at all. Rather than stub around it I switched to `FileReader`, which
+is both testable and supported further back (Safari gained `Blob.text()` only in 14).
+
+### Lesson
+
+Mutation testing found two false-confidence tests that a green suite reported as fine. That is now
+three milestones in a row where deliberately breaking the code found tests that were not testing
+anything — M4, M5, M6, and now M10.
+
+The `details` bug is the more interesting one, because it is the kind of defect a test suite is
+structurally unlikely to catch: everything "worked", and the only symptom was information quietly not
+reaching the screen. It was found by driving the real UI and reading what appeared.
+
+---
+
+## 11. Milestone 11 — dashboard and alerts
+
+### Prompt
+
+> "Proceed to M11 — dashboard and alerts", with the semantics spelled out precisely: *"Do not invent
+> an 'overdue' lifecycle status in the UI"*, *"preserve Unassigned"*, *"don't assume counts must sum
+> to total loans because custodians are many-to-many"*, *"If the API provides total separately from
+> the current page, use the correct value for the badge rather than the number of rows currently
+> rendered"*, and a list of six mutations to run.
+
+### What I got
+
+The most accurate first pass of the project, and I think the prompt is the reason. Each of those
+constraints names a specific way the implementation could be wrong — a fifth status row, a dropped
+`Unassigned` bucket, a badge reading `rows.length` — and naming the failure mode is much more
+effective than asking for correctness in general.
+
+### What went wrong
+
+Nothing in the implementation. All fifteen mutations were caught on the first sweep, including all
+six the prompt asked for specifically.
+
+The one thing I would flag rather than hide: the test fixture I wrote makes custodian counts
+9 + 4 + 3 = 16 against 14 loans, deliberately, so that any code "reconciling" the numbers has to
+change one of them and fail. That fixture is doing more work than the assertions around it, and I
+would not have thought to build it that way without the prompt naming the many-to-many trap.
+
+### Lesson
+
+A prompt that enumerates the specific ways an implementation could be subtly wrong produces better
+output than one that asks for a correct implementation. "Render the custodian breakdown faithfully"
+would not have been enough; "don't assume counts must sum to total loans" was.
+
+---
+
+## 12. Milestone 12 — live verification, and five defects in my own test harness
+
+### Prompt
+
+> "Proceed to M12 — full live ten-goal verification... Verify all ten goals against the LIVE Render
+> URL using the actual UI, not only direct API calls." Plus: *"If you discover a bug, stop and report
+> it rather than quietly changing code and continuing the verification."*
+
+### What I got
+
+A Playwright harness driving real Chromium against the deployed application. 52 checks, and
+ultimately zero application defects.
+
+### What went wrong — all of it mine
+
+Every initial failure was a defect in the verification harness, and each one had to be chased down
+before it could be dismissed. That is the part worth recording, because "the test failed, so I
+loosened the assertion" is how a verification exercise becomes worthless.
+
+1. `getByLabel('Title')` also matched the search box labelled "Search title or code".
+2. **Custodian assignment appeared to be silently discarding selections.** This looked like a real
+   data-loss bug — a librarian ticks two boxes, saves, and gets an empty set. I wrote *two* separate
+   probes to reproduce it, capturing the actual `PUT` body. The body carried both uuids every time,
+   and the selection survived even a mid-edit refetch, because TanStack Query's structural sharing
+   keeps the array identity stable. The real cause: I read the checkbox count after a page reload,
+   before the librarian list had rendered.
+3. The exported CSV "failed" its assertion while looking correct — because the server emits **CRLF**
+   per RFC 4180, as `csv.ts` documents, and I split the file on `\n` alone.
+4. `<option>` elements are never "visible" to Playwright; card `innerText` separates its paragraphs
+   with `\n\n`; table headers render uppercase through CSS `text-transform`, and `innerText` returns
+   rendered text.
+5. One script aborted before writing its results file, so nine checks printed as passing but were
+   never persisted. I re-ran that flow rather than transcribe console output into the artifact by
+   hand.
+
+### Lesson
+
+The instruction to stop and report rather than quietly fix was the most valuable constraint in the
+milestone, and the custodian probe is why. The fastest path was to "fix" what looked like a real bug;
+the correct path was to spend two probes proving the application was right and my harness was wrong.
+A verification suite that reports failures it caused itself is worse than no verification, because it
+sends you editing working code.
+
+The CRLF case is the same shape in miniature: the evidence line printed the header correctly, so the
+failure looked inexplicable until I looked at the actual bytes.
+
+---
+
+## 13. Milestone 13 — documentation, and an advisory that cannot be fixed
+
+### Prompt
+
+> "Proceed to M13 — final documentation, submission, and cleanup", including: *"Do not invent
+> decisions that weren't actually made... tests that weren't run... deployment guarantees that don't
+> exist"*, and specifically: *"Investigate the npm audit result carefully... Do NOT blindly run
+> `npm audit fix`."*
+
+### What I got
+
+Documentation drafted from the code rather than from memory — the table-by-table schema reference was
+written by reading the migrations and `schema.prisma`, and the architecture document by reading
+`app.ts`, `policy.ts` and `session.ts`.
+
+### What went wrong
+
+Nothing broke, but two investigations changed the answer I would otherwise have written.
+
+**The `qs` advisory has no fix.** npm reports "fix available via `npm audit fix`", which is
+misleading. Running it in a throwaway clone changed *nothing* — no diff, same eleven advisories. Even
+`--force` left Express on 4.22.2 with the advisory intact and only bumped the test runner. The
+patched `qs` is 6.16.0; every Express 4 release pins `~6.15.1`. Had I trusted npm's summary line I
+would have written "fixed" in the submission, and it would have been false.
+
+**The local build was lying about its own output.** I had been reporting bundle sizes of 473 kB and
+523 kB across three milestones. `vite.config.ts` set `envDir: '..'`, so Vite loaded the server's root
+`.env` — which contains `NODE_ENV=development` — and applied it to the build. Every local production
+build was emitting a development React bundle. The deployed artifact was always correct at 271 kB;
+my numbers were not. Nothing in `web/src` reads `import.meta.env` at all, so removing `envDir` fixed
+it, and the local build now produces byte-for-byte the same bundle hash as the deployed one.
+
+### Lesson
+
+Both of these were tooling reporting something confidently and being wrong: npm saying a fix was
+available when none exists, and Vite silently honouring a `NODE_ENV` from a file that belonged to a
+different workspace. Neither would have been caught by a test, and both would have become false
+claims in the submission document.
+
+Verifying a tool's summary rather than quoting it is the same discipline as mutation testing, applied
+to infrastructure instead of code.
+
+---
+
+## How AI was actually used, overall
+
+It wrote a large share of the code. What it did not do is decide what was correct.
+
+The pattern that worked, repeatedly:
+
+1. **Read the brief myself first**, and settle ambiguities before prompting. Goal 4's conflict rule
+   deadlocks on a literal reading; goal 7's import is of items, not loans. Both were resolved by
+   re-reading the assignment, and one of them corrected a milestone that had already been specified
+   to me in the wrong shape.
+2. **State the failure modes in the prompt**, not just the requirement. Milestone 11 produced the
+   cleanest first pass of the project because the prompt named the specific traps.
+3. **Verify by breaking things.** Mutation testing found five vacuous tests across the project —
+   tests that passed against deliberately broken implementations. Every one of them would have
+   shipped as false confidence.
+4. **Distrust green.** A passing suite, a clean `npm audit`, and a successful build each turned out at
+   least once to be reporting something that was not true.
+
+The judgement calls — the database-enforced invariants, the JWT reversal, three concurrency
+mechanisms for three different races, keying dismissals on the loan rather than the item, leaving an
+unfixable advisory unfixed — are the parts I would defend in review, and they are the parts that came
+from reading the problem rather than from generation.

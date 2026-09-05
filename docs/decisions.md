@@ -547,3 +547,108 @@ assumption stops being true.
   are terminal, and a later loan on the same item is a different row. That asymmetry is why no lock
   is needed here, unlike the archive/loan race in milestone 4.
 
+
+---
+
+## Decision 22 — One process serves both the API and the SPA
+
+- **Chose:** a single Render web service. Express handles `/api/*`, then `express.static(web/dist)`
+  and a history fallback handle everything else.
+- **Rejected:** a static host for the SPA plus a separate API service, which is the more common shape.
+- **Why:** the session cookie. Same-origin means it stays `SameSite=Lax` and there is no CORS
+  configuration anywhere in the codebase. Splitting across two hosts would force
+  `SameSite=None; Secure`, a cross-site cookie, and an allowlist to maintain — three more things that
+  can be wrong in front of a reviewer, in exchange for a separation this size of application does not
+  need.
+
+  The ordering inside the process is load-bearing and easy to get wrong: the API 404 is registered
+  *before* the static handler, so a mistyped endpoint returns a JSON 404 rather than falling through
+  and being answered with the SPA's HTML. The history fallback is registered after it, so a deep link
+  like `/loans/:id` still reloads correctly.
+
+  `serveSpa()` is skipped when `web/dist` does not exist, so `npm run dev` — where Vite serves the SPA
+  and proxies `/api` — does not require a build to have been run.
+
+---
+
+## Decision 23 — Two database roles in production, not one
+
+- **Chose:** `lending_app` for every request the application serves, `neondb_owner` for migrations,
+  seeding and the test-harness reset. Both exist on Neon; the application's `DATABASE_URL` never has
+  DDL rights and holds no `UPDATE`, `DELETE` or `TRUNCATE` on `loan_events`.
+- **Rejected:** a single connection string for everything, which was the documented fallback if the
+  managed provider made the split impractical. **It was not needed** — Neon supports it, and the
+  fallback is recorded here only because it was planned for, not because it shipped.
+- **Why:** it is what makes the append-only history a *privilege* rather than only a trigger. A
+  trigger stops a mistake; a missing grant stops a code path that fully intends to do it. And
+  `TRUNCATE` does not fire row-level triggers, so without the grant separation the trigger has a hole
+  that the test suite itself demonstrates every time it resets the database.
+
+  Two details worth recording because they were not obvious in advance:
+
+  - Neon's `neondb_owner` is **not** a superuser. That makes the separation stronger there than it is
+    on a local Postgres, where the owner often is.
+  - Neon's *pooled* endpoint cannot run DDL, because pgbouncer in transaction mode does not support
+    it. So `ADMIN_DATABASE_URL` must use the direct endpoint while `DATABASE_URL` uses the pooled one.
+    That provider constraint maps exactly onto the split that already existed for privilege reasons —
+    the two requirements happened to want the same shape.
+
+---
+
+## Decision 24 — Two frontend dependencies, and no more
+
+- **Chose:** `react-router-dom` and `@tanstack/react-query`. Plain controlled forms, one hand-written
+  stylesheet, and the weekly chart built as a real `<table>` with CSS bars.
+- **Rejected:** a component library, a design system, a form library, and a charting library.
+- **Why:** the brief rewards judgement rather than visual polish. Routing and server-state caching are
+  genuinely hard to hand-roll well — cache invalidation after a mutation is exactly where a
+  hand-rolled version would drift and start showing stale loan state. Everything else on these screens
+  is a form, a table or a list, and a dependency for those buys nothing while adding surface area.
+
+  The chart in particular: a charting library for one chart on one page is a poor trade, and building
+  it as a table rather than an SVG picture means the markup a screen reader walks *is* the data, not
+  a caption describing a graphic that could drift from it.
+
+---
+
+## Decision 25 — Lifecycle buttons are always enabled, and the server's refusal is the feedback
+
+- **Chose:** on a loan, Issue / Mark returned / Mark lost are always rendered and always clickable,
+  whatever state the loan is in. A refused action renders the server's 409 verbatim, including the
+  `{ currentStatus, attempted }` detail.
+- **Rejected:** disabling or hiding the actions that are not legal for the current status — the more
+  conventional choice.
+- **Why:** the rule about which transition is legal already exists in exactly one place, the
+  conditional UPDATE in `transition()`. Greying out a button re-implements that rule in React, where
+  it can drift from the server's version, and the two disagreeing is worse than either alone.
+
+  It also hides the genuinely interesting case. The status on screen is a moment old, and another
+  librarian may already have acted on the same loan. A disabled button says "you cannot do this"; a
+  refused request says "the loan is already returned" — which is true, current, and actually useful.
+
+  The cost is honest and accepted: an action that is obviously wrong is still offered. That is the
+  trade for having one authority on the rules rather than two.
+
+---
+
+## Decision 26 — The `qs` advisory is documented rather than forced
+
+- **Chose:** leave Express 4 and its `qs` dependency exactly as they are, and describe the advisory
+  plainly in `SUBMISSION.md`.
+- **Rejected:** an npm `overrides` entry pinning `qs` to the patched 6.16.0; and upgrading to
+  Express 5.
+- **Why:** there is no fix to apply. The patched `qs` is 6.16.0, and every Express 4 release — up to
+  and including the current 4.22.2 — pins `~6.15.1`, which excludes it. This was checked rather than
+  assumed: `npm audit fix` in a throwaway clone changes nothing at all, and `npm audit fix --force`
+  bumps only the test runner and leaves Express on 4.22.2 with the advisory intact.
+
+  An `overrides` entry would work mechanically, and that is the reason to be careful with it: it would
+  run Express against a transitive version outside the range its maintainers declared, and the
+  advisory's fix changes array-limit handling in the query parser — precisely the code path Express
+  uses on every request. Passing tests would not tell me much, because the failure mode of that change
+  is subtle and input-dependent.
+
+  Weighed against a moderate-severity denial-of-service on query-string parsing, further limited by
+  Node's default ~16 KB cap on request URLs and by every parameter being whitelisted with zod after
+  parsing, forcing the override is the worse trade. Stability of a verified implementation beats a
+  cleaner `npm audit` line.

@@ -1,7 +1,7 @@
 # Plan
 
-Written as the work happens. Milestones 5 onward are intent, not record — this file is updated when
-each one lands, so the estimates below stay honest about what was guessed and what was measured.
+Written as the work happened, updated when each milestone landed. Nothing here is reconstructed
+after the fact, and nothing is backdated.
 
 ## How the work was split
 
@@ -13,16 +13,20 @@ The order is deliberate: nothing is built before the thing it depends on can be 
 
 | # | Milestone | Status | Commit |
 |---|---|---|---|
+| — | Initialise repository | done | `d0e0e5f` |
 | 1 | Scaffold, schema, database-enforced invariants | done | `5ec9e81` |
 | 2 | Sessions, role guards, authorization matrix | done | `ec04c16` |
 | 3 | Catalogue CRUD, archive/restore, custodians | done | `7bda8f8` |
 | 4 | Loan lifecycle, timeline, overdue derivation | done | `f2be968` |
 | 5 | Loans list: search, filters, sorting, pagination | done | `3abe170` |
 | 6 | Bulk CSV import, bulk return, export | done | `3a2f24e` |
-| 7 | Dashboard and overdue alerts | done | *pending review* |
-| 8 | Frontend | planned | — |
-| 9 | Deployment and seeded demo data | planned | — |
-| 10 | Documentation pass and `SUBMISSION.md` | planned | — |
+| 7 | Dashboard and overdue alerts | done | `11e5f43` |
+| 8 | Deployable single service + Render/Neon | done | `7fd1062`, `e88462e` |
+| 9 | Frontend foundation, auth, catalogue | done | `764a591` |
+| 10 | Loans, lifecycle actions, bulk operations (frontend) | done | `b14db0f`, `069785b` |
+| 11 | Dashboard and alerts (frontend) | done | `8bf2ad1`, `507b7ac` |
+| 12 | Live ten-goal verification against production | done | no code change required |
+| 13 | Documentation, submission, final cleanup | done | this commit |
 
 ## Why this order
 
@@ -45,9 +49,15 @@ loan" — recorded as an `it.todo` rather than faked, and turned into real tests
 and the full list followed in milestone 5, reusing `resolveBorrowerScope` — written and probe-tested
 back in milestone 2, and given its first real route here.
 
+**Deployment before the frontend.** Milestone 8 was moved to the front of the remaining work rather
+than left to the end. Deployment was the highest-risk unknown left, and discovering a broken release
+build after writing the whole frontend is the worst possible order to find out. It was the right
+call: `npm start` pointed at a path `tsc` had never produced, and the production build had never once
+been run.
+
 ## Estimates versus actuals
 
-Recorded per milestone as it lands. The budget is ~12 hours total.
+The budget in the brief is a ~12-hour size guide.
 
 | # | Estimated | Actual | Notes |
 |---|---|---|---|
@@ -58,62 +68,91 @@ Recorded per milestone as it lands. The budget is ~12 hours total.
 | 5 | 1 h | ~1.25 h | No migration needed again; the extra went on a second vacuous test, this time for pagination ordering |
 | 6 | 1.5 h | ~1.75 h | Re-reading the brief caught that the import is of items, not loans; a third vacuous test found by mutation |
 | 7 | 1 h | ~1.25 h | No migration again; eight mutations all caught first time, and the chronology CHECK caught an incoherent test fixture |
+| 8 | 1 h | ~1.5 h | Real deployment friction: a broken `start` path, a missing root script, a wrong region, and a screenshot that nearly committed a password |
+| 9 | 1.5 h | ~1.5 h | On estimate. Needed one backend addition — `GET /api/users` — because nothing else exposed user ids |
+| 10 | 1.25 h | ~1.75 h | Two vacuous frontend tests found by mutation; also uncovered a real error-rendering bug (see below) |
+| 11 | 0.75 h | ~1 h | 15 mutations, all caught first time |
+| 12 | 0.75 h | ~1.5 h | Live UI verification with Playwright; five of my own harness defects to chase down before anything could be trusted |
+| 13 | 0.75 h | ~1.25 h | Documentation pass, dependency audit investigation, build-environment fix |
 
-Running total is ahead of the original plan's estimate for the same point, mostly because each
-milestone has been planned before being written.
+**Total: roughly 17 hours of work.** The brief calls 12 a size guide rather than a limit, and this
+went over it. Where the extra time went, honestly: mutation testing (which found five vacuous tests
+that would otherwise have shipped as false confidence), live verification through a real browser, and
+the documentation pass.
+
+**Elapsed time is not the same number.** The commit timestamps show two working sessions on
+consecutive days — 2026-09-04 11:21 to 23:09, and 2026-09-05 15:28 onward. That is what the history
+says and I have not adjusted it to look more like a week of steady work.
 
 ## What changed from the original plan
 
 - **Sessions replaced JWTs** (Decision 5). The phase 1 architecture chose stateless tokens; logout
   cannot revoke one, so milestone 2 reversed it.
 - **`cookie-parser` was dropped** for a ten-line reader after a types conflict (Decision 7).
-- **Playwright was dropped entirely**, not deferred, so it could not become an unresolved claim.
-- **Milestone 3 needed no migration.** Inspecting the schema before planning showed milestone 1 had
-  already built everything the catalogue and custodians required.
-- **Milestone 4 needed no migration either**, for the same reason.
-- **Milestone 5 needed no migration either.** The indexes on `status`, `due_on`, `requested_at`,
-  `borrower_id` and `(status, due_on)` from milestone 1 already cover every filter and sort the
-  loans list offers.
-- **Milestone 6 needed no migration either** — bulk operations write through existing services, and
-  the export is a read.
-- **Milestone 7 needed no migration either.** `alert_dismissals` has been sitting there with the
-  right composite key since milestone 1. Five milestones running with no schema change, which is
-  what milestone 1 spending its time on the data model bought.
+- **Playwright was dropped from the product**, not deferred, so it could not become an unresolved
+  claim. It reappeared in milestone 12 as a *verification* tool only, installed outside the
+  repository so that no project dependency changed.
+- **Milestones 3 through 7 needed no migration.** Inspecting the schema before planning showed
+  milestone 1 had already built what each one required — including `alert_dismissals`, which sat
+  unused with the right composite key from milestone 1 until goal 10 needed it in milestone 7. Five
+  milestones running with no schema change is what milestone 1 spending its time on the data model
+  bought.
 - **The CSV import is of catalogue items, not loans.** The milestone was specified to me in
   loan-shaped terms; re-reading goal 7 settled it (Decision 15).
+- **One backend endpoint was added during the frontend work.** `GET /api/users`, librarian-only,
+  because `POST /api/loans` takes a `borrowerId` and nothing exposed user ids — a librarian cannot be
+  asked to type a uuid. Flagged at the time rather than slipped in.
+- **A real bug surfaced while building the M10 screens.** The API sends `details` as a
+  `{field, message}` array for validation but as a plain object for a conflict; the error renderer
+  assumed an array, so a refused transition's `{currentStatus, attempted}` was present in the
+  response and silently dropped on screen. Fixed, with a test.
 
-## Known gaps, carried forward deliberately
+## Known limitations, carried forward deliberately
 
+- **Free-tier cold start.** Render sleeps the service when idle and Neon suspends the database. The
+  first request after a quiet period takes ~25 seconds. Measured, not estimated.
 - **No cancel or decline for a requested loan.** With one open loan per item, an unwanted request
   blocks its item indefinitely. Out of scope by decision (Decision 3), and the first thing I would
   revisit with more time.
+- **No debounce on search inputs.** One request per keystroke. Fine at demo scale, wrong with real
+  traffic.
+- **Pickers load the first 100 users or items** and say so when there are more, rather than paging or
+  type-ahead. The borrower picker searches server-side; the loans-list item and borrower filters do
+  not.
+- **Verification was headless Chromium only.** No other browser, and no mobile device, was tested.
+  No cross-browser or responsive claim is made anywhere in this repository.
+- **Two Vitest majors in one repository** — the server on 2.x, the web workspace on 3.x. Vitest 2
+  bundles Vite 5, which conflicts with the web workspace's Vite 6 types. Unifying means upgrading the
+  server's test runner and re-validating 318 tests, for no functional gain.
+- **An unfixable dependency advisory.** `qs`, reached through Express 4, has two moderate advisories.
+  There is no fix: the patched `qs` is 6.16.0 and every Express 4 release pins `~6.15.1`. Verified by
+  running `npm audit fix` and `npm audit fix --force` in a throwaway clone — neither changes Express.
+  See SUBMISSION.md for the full reasoning and why forcing an override was rejected.
 - **No cleanup of expired session rows.** Expiry is checked on read, so this is housekeeping, not
   correctness.
-- **A user lookup endpoint is missing.** `POST /api/loans` takes a `borrowerId` and the loans list
-  filters by one, but nothing exposes user ids, so a librarian cannot discover who to issue to.
-  Deliberately deferred out of milestone 5 to keep it scoped to goal 6; the frontend milestone will
-  need the smallest possible librarian-only endpoint.
 - **`GET /items/:id` returns a role-dependent shape** — custodians and loan history for librarians,
   neither for members.
+- **No rate limiting** on login or any other endpoint.
 
-## Goals covered so far
+## Goals and where they live
 
-| Goal | Where |
-|---|---|
-| 1 Accounts and roles | milestone 2 |
-| 2 Catalogue items | milestone 3 |
-| 3 Loans | milestone 4 |
-| 4 Loan lifecycle with rules | milestone 4 |
-| 5 Custodians | milestone 3 |
-| 6 Finding loans | milestone 5 |
-| 7 Bulk operations | milestone 6 |
-| 8 Dashboard | milestone 7 |
-| 9 History you cannot rewrite | milestone 1 (constraints) + milestone 4 (timeline) |
-| 10 Overdue alerts | milestone 7 |
-
-All ten are implemented server-side. What remains is the frontend, deployment with seeded demo data,
-and the final documentation pass.
+| Goal | Backend | Frontend | Verified live |
+|---|---|---|---|
+| 1 Accounts and roles | M2 | M9 | M12 |
+| 2 Catalogue items | M3 | M9 | M12 |
+| 3 Loans | M4 | M10 | M12 |
+| 4 Loan lifecycle with rules | M4 | M10 | M12 |
+| 5 Custodians | M3 | M9 | M12 |
+| 6 Finding loans | M5 | M10 | M12 |
+| 7 Bulk operations | M6 | M10 | M12 |
+| 8 Dashboard | M7 | M11 | M12 |
+| 9 History you cannot rewrite | M1 (constraints) + M4 (timeline) | M10 | M12 |
+| 10 Overdue alerts | M7 | M11 | M12 |
 
 ## What was cut when time ran short
 
-Nothing yet. This section is filled in at the end, from what actually happened.
+Nothing was cut from the ten goals — all are implemented, tested and verified live.
+
+What was cut was polish and infrastructure, in this order, and each was a decision rather than an
+oversight: index-backed text search, keyset pagination, request debouncing, a session sweeper, a
+charting library, cross-browser testing, and cancel/decline for requested loans.
