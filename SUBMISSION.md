@@ -178,8 +178,8 @@ See `docs/decisions.md` Decision 26.
 (which found five vacuous tests), live browser verification, and the documentation pass.
 
 The commit history shows two working sessions on consecutive days — 2026-09-04 and 2026-09-05. I have
-not backdated or squashed anything to make that look like a week of steady work. 15 incremental
-commits, one per milestone, never squashed, all on `main`.
+not backdated or squashed anything to make that look like a week of steady work. 16 incremental
+commits, roughly one per milestone, never squashed, all on `main`.
 
 ## Known limitations
 
