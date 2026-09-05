@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  // The production build checks the application and nothing else.
+  //
+  // The default tsconfig also covers `test/`, which is right for `npm run
+  // typecheck` — the tests are code and should be type-checked. But pulling
+  // vitest, jsdom and the testing-library types into the deploy's compilation
+  // makes the release build depend on test tooling and do more work on a small
+  // build host, for no benefit: none of it reaches the bundle.
+  //
+  // Same reasoning, and the same shape, as server/tsconfig.build.json.
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}
